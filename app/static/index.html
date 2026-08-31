@@ -1,0 +1,3258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231b2126'/%3E%3Cpath d='M2 12 L5 6 L8 9 L11 3 L14 7' fill='none' stroke='%23ffffff' stroke-width='1.6' stroke-linecap='square'/%3E%3C/svg%3E"
+    />
+    <title>TFM GNSS pipeline - local interface</title>
+    <style>
+      /* ==================================================================
+   TFM GNSS - local interface
+   Presentation layer only. No scientific value, no label, no plot
+   position is changed by this stylesheet.
+
+   Principle: the interface is glass, the data is the object. Every
+   chrome element steps back so the figures read first. One solid
+   dark block per section = the primary action; everything else is
+   quiet. No web font (the server is local and may be offline), no
+   library, no build - this file is served as-is by http.server.
+   ================================================================== */
+
+      :root {
+        /* Ground and ink ------------------------------------------------ */
+        --paper: #f4f6f7; /* page ground, a cool paper */
+        --surface: #ffffff; /* sections, cards, table rows */
+        --surface-2: #f8f9fa; /* zebra rows, inset blocks */
+        --ink: #16191c;
+        --ink-2: #59636b; /* secondary prose, notes */
+        --ink-3: #7d878e; /* labels, captions */
+        --rule: #e0e4e7; /* hairlines */
+        --rule-2: #c8ced3; /* stronger hairlines, table head */
+
+        /* The only two colours that carry meaning ----------------------- */
+        --action: #1b2126; /* primary button: the single dark block */
+        --link: #175d9c; /* links, focus ring, current nav item */
+        --link-soft: #eaf1f8;
+
+        /* State ---------------------------------------------------------- */
+        --ok: #1a6b47;
+        --busy: #8a5b12;
+        --err: #9c2126;
+        --err-soft: #fdeced;
+
+        /* Type ----------------------------------------------------------- */
+        --sans:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        --mono:
+          ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas,
+          "Liberation Mono", monospace;
+
+        /* One ratio (1.2), one scale, no value off it -------------------- */
+        --t-xs: 0.75rem; /* 12px - captions, chips */
+        --t-sm: 0.8125rem; /* 13px - labels, table cells */
+        --t-md: 0.875rem; /* 14px - dense UI text */
+        --t-base: 1rem; /* 16px - prose */
+        --t-lg: 1.125rem; /* 18px - h3 */
+        --t-xl: 1.375rem; /* 22px - h2 */
+        --t-2xl: 1.75rem; /* 28px - h1, above h2 (it was below) */
+
+        /* Space: an 8pt grid --------------------------------------------- */
+        --s1: 0.25rem;
+        --s2: 0.5rem;
+        --s3: 0.75rem;
+        --s4: 1rem;
+        --s5: 1.5rem;
+        --s6: 2rem;
+        --s7: 3rem;
+
+        --topbar-h: 3.25rem;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: var(--sans);
+        font-size: var(--t-base);
+        line-height: 1.55;
+        color: var(--ink);
+        background: var(--paper);
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: calc(var(--topbar-h) + var(--s5)) var(--s5) var(--s7);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ==================================================================
+   Fixed top bar - the only always-visible chrome.
+   The page is ~15 000 px tall with results loaded; without this you
+   lose track of where you are and of the one global setting.
+   ================================================================== */
+      .topbar {
+        position: fixed;
+        inset: 0 0 auto 0;
+        height: var(--topbar-h);
+        background: var(--surface);
+        border-bottom: 1px solid var(--rule-2);
+        z-index: 50;
+      }
+      .topbar-inner {
+        max-width: 1400px;
+        height: 100%;
+        margin: 0 auto;
+        padding: 0 var(--s5);
+        display: flex;
+        align-items: center;
+        gap: var(--s5);
+      }
+      .topbar-title {
+        font-size: var(--t-md);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+      .topbar-title span {
+        font-family: var(--mono);
+        font-size: var(--t-xs);
+        font-weight: 400;
+        color: var(--ink-3);
+        margin-left: var(--s2);
+      }
+
+      /* Step navigation --------------------------------------------------- */
+      .steps-nav {
+        display: flex;
+        align-items: center;
+        gap: var(--s1);
+        margin-right: auto;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .steps-nav::-webkit-scrollbar {
+        display: none;
+      }
+      .steps-nav a {
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+        text-decoration: none;
+        padding: var(--s1) var(--s2);
+        border-radius: 3px;
+        white-space: nowrap;
+      }
+      .steps-nav a:hover {
+        background: var(--link-soft);
+        color: var(--link);
+      }
+      .steps-nav a.current {
+        color: var(--link);
+        font-weight: 600;
+        background: var(--link-soft);
+      }
+      .steps-nav a b {
+        font-family: var(--mono);
+        font-weight: 600;
+        margin-right: 0.3em;
+      }
+
+      /* The Ndat criterion lives here: it is the only setting that applies
+   to the whole page, so it belongs to the page chrome, not to a
+   section that looked like a step but ran nothing. */
+      .topbar-setting {
+        display: flex;
+        align-items: center;
+        gap: var(--s2);
+        font-size: var(--t-sm);
+        white-space: nowrap;
+      }
+      .topbar-setting label {
+        margin: 0;
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+      }
+      .topbar-setting select {
+        width: auto;
+        min-width: 12.5rem;
+        margin: 0;
+      }
+
+      /* ==================================================================
+   Page head
+   ================================================================== */
+      h1 {
+        font-size: var(--t-2xl);
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1.2;
+        margin: 0 0 var(--s3);
+        text-wrap: balance;
+      }
+      /* Standfirst: full width on purpose. It sits under the h1 and above
+   sections that span the whole page - a narrow column there read as
+   ragged, so it takes the page width instead of the prose measure. */
+      .page-intro {
+        max-width: none;
+        color: var(--ink-2);
+        font-size: var(--t-md);
+        margin: 0 0 var(--s6);
+      }
+      .page-intro code {
+        font-size: 0.92em;
+      }
+
+      /* ==================================================================
+   Sections = one pipeline step
+   ================================================================== */
+      /* The inner inset is the section's own padding. It used to be a
+   margin pushed onto every direct child, which silently also pushed
+   the buttons apart: 52 px between Run and Clear against 16 px
+   between two fields. A container that pads is a container that
+   cannot leak into its children's spacing. */
+      section {
+        background: var(--surface);
+        border: 1px solid var(--rule);
+        border-radius: 3px;
+        padding: 0 var(--s5) var(--s5);
+        margin-bottom: var(--s5);
+        scroll-margin-top: calc(var(--topbar-h) + var(--s3));
+      }
+
+      /* Header strip: the number carries the real dependency order, the
+   chip says out loud what was only buried in a paragraph. It breaks
+   out of the section padding to span the full width. */
+      .step-head {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: var(--s2) var(--s3);
+        margin: 0 calc(-1 * var(--s5)) var(--s4);
+        padding: var(--s4) var(--s5);
+        border-bottom: 1px solid var(--rule);
+        background: var(--surface-2);
+      }
+      .step-num {
+        font-family: var(--mono);
+        font-size: var(--t-md);
+        font-weight: 600;
+        color: var(--ink-3);
+        font-variant-numeric: tabular-nums;
+      }
+      .step-head h2 {
+        margin: 0;
+        flex: 1 1 auto;
+      }
+      h2 {
+        font-size: var(--t-xl);
+        font-weight: 600;
+        letter-spacing: -0.015em;
+        line-height: 1.25;
+        margin: 0 0 var(--s2);
+      }
+      h3 {
+        font-size: var(--t-lg);
+        font-weight: 600;
+        letter-spacing: -0.005em;
+        margin: var(--s5) 0 var(--s2);
+      }
+      h4 {
+        font-size: var(--t-base);
+        font-weight: 600;
+        margin: var(--s4) 0 var(--s1);
+      }
+
+      /* Dependency chip - purely presentational, the prose already said it */
+      .dep {
+        font-size: var(--t-xs);
+        font-family: var(--mono);
+        color: var(--ink-2);
+        background: var(--surface);
+        border: 1px solid var(--rule-2);
+        border-radius: 2px;
+        padding: 0.15em 0.5em;
+        white-space: nowrap;
+      }
+      .dep.none {
+        color: var(--ink-3);
+        border-style: dashed;
+      }
+
+      /* Run state, driven from the single runStep() choke point */
+      .step-state {
+        font-size: var(--t-xs);
+        font-family: var(--mono);
+        color: var(--ink-3);
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45em;
+        white-space: nowrap;
+      }
+      .step-state::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--rule-2);
+        flex: none;
+      }
+      section[data-state="busy"] .step-state {
+        color: var(--busy);
+      }
+      section[data-state="busy"] .step-state::before {
+        background: var(--busy);
+      }
+      section[data-state="done"] .step-state {
+        color: var(--ok);
+      }
+      section[data-state="done"] .step-state::before {
+        background: var(--ok);
+      }
+      section[data-state="error"] .step-state {
+        color: var(--err);
+      }
+      section[data-state="error"] .step-state::before {
+        background: var(--err);
+      }
+
+      /* ==================================================================
+   Prose - full width, deliberately.
+   Design call: text fills its container like everything else on the
+   page, rather than sitting in a narrow column with a wide empty
+   half beside it. It costs line length - a paragraph runs long here -
+   and that is accepted: these are short explanatory blocks of two to
+   four lines, not an article, and the ragged column read worse.
+   ================================================================== */
+      p,
+      .intro {
+        margin: 0 0 var(--s3);
+        max-width: none;
+      }
+      .intro {
+        color: var(--ink-2);
+        font-size: var(--t-md);
+      }
+      .intro strong {
+        color: var(--ink);
+      }
+      section ul {
+        padding-left: 1.15rem;
+        max-width: none;
+      }
+      section ul li {
+        margin-bottom: var(--s1);
+        max-width: none;
+      }
+      section ul li::marker {
+        color: var(--ink-3);
+      }
+
+      code {
+        font-family: var(--mono);
+        font-size: 0.88em;
+        background: var(--link-soft);
+        padding: 0.08em 0.3em;
+        border-radius: 2px;
+      }
+
+      a {
+        color: var(--link);
+        text-underline-offset: 2px;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--link);
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+
+      /* ==================================================================
+   Forms
+   ================================================================== */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: var(--s2) var(--s4);
+        max-width: 900px;
+        align-items: end;
+        margin-bottom: var(--s4);
+      }
+      /* The RAW folder field takes a whole line of its own: a Windows path is
+   long, and Browse... belongs right next to the field it fills. Inside
+   .grid it would land in a 150px column and both would be unusable.
+   Input and button are both 2.25rem tall, so they align without help. */
+      .dir-field {
+        max-width: 900px;
+        margin-bottom: var(--s4);
+      }
+      .dir-row {
+        display: flex;
+        gap: var(--s2);
+        align-items: flex-start;
+      }
+      .dir-row input {
+        margin-top: 0;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .dir-row button {
+        flex: 0 0 auto;
+      }
+
+      label {
+        display: block;
+        margin-top: var(--s2);
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+      }
+      input,
+      select {
+        font-family: inherit;
+        font-size: var(--t-md);
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--rule-2);
+        border-radius: 2px;
+        padding: 0 var(--s2);
+        height: 2.25rem; /* was 29 px, uneven with buttons */
+        margin-top: var(--s1);
+        width: 100%;
+        box-sizing: border-box;
+      }
+      input[type="number"] {
+        font-variant-numeric: tabular-nums;
+      }
+      input:hover,
+      select:hover {
+        border-color: var(--ink-3);
+      }
+
+      input[type="checkbox"] {
+        width: auto;
+        height: auto;
+        margin: 0 0.4em 0 0;
+        accent-color: var(--link);
+        vertical-align: -0.1em;
+      }
+
+      /* ==================================================================
+   Buttons - the whole point. "Run" and "Clear" were pixel-identical
+   default browser buttons; in one row of section 2B four of them
+   looked the same and only one was the actual action.
+   ================================================================== */
+      /* A row of buttons is a flex container, not inline-blocks separated by
+   source whitespace: between two inline <button> tags the newline in
+   the HTML renders as a ~4 px space that no margin can cancel, so the
+   gap could never be made EXACTLY equal to the one between fields.
+   Flex + gap gives the same 16 px, to the pixel. */
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--s4);
+        margin: var(--s4) 0;
+      }
+
+      button {
+        font-family: inherit;
+        font-size: var(--t-md);
+        font-weight: 500;
+        line-height: 1;
+        height: 2.25rem;
+        padding: 0 var(--s4);
+        margin: 0;
+        border-radius: 2px;
+        cursor: pointer;
+        /* primary: the only solid dark block in the section */
+        color: var(--surface);
+        background: var(--action);
+        border: 1px solid var(--action);
+      }
+      button:hover {
+        background: #2b343b;
+        border-color: #2b343b;
+      }
+      button:active {
+        background: #0e1215;
+      }
+
+      /* secondary: same size, no weight */
+      button.clear-btn,
+      button.btn-quiet {
+        color: var(--ink-2);
+        background: var(--surface);
+        border-color: var(--rule-2);
+        font-weight: 400;
+      }
+      button.clear-btn:hover,
+      button.btn-quiet:hover {
+        background: var(--surface-2);
+        border-color: var(--ink-3);
+        color: var(--ink);
+      }
+
+      /* ==================================================================
+   Summary tables
+   ================================================================== */
+      table.summary {
+        border-collapse: collapse;
+        width: 100%;
+        margin: var(--s4) 0;
+        font-size: var(--t-sm);
+        background: var(--surface);
+      }
+      table.summary th,
+      table.summary td {
+        border-bottom: 1px solid var(--rule);
+        padding: var(--s2) var(--s3);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        vertical-align: top;
+      }
+      table.summary th:first-child,
+      table.summary td:first-child {
+        text-align: left;
+        font-variant-numeric: normal;
+      }
+      table.summary thead th {
+        position: sticky;
+        top: var(--topbar-h);
+        z-index: 3;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--rule-2);
+        font-size: var(--t-xs);
+        font-weight: 600;
+        color: var(--ink-2);
+        line-height: 1.3;
+      }
+      table.summary tbody tr:nth-child(even) {
+        background: var(--surface-2);
+      }
+      table.summary tbody tr:last-child td {
+        border-bottom: 0;
+      }
+      .table-scroll {
+        overflow-x: auto;
+        margin: var(--s4) 0;
+      }
+
+      /* ==================================================================
+   Result cards - the plots are the object. The card was grey
+   (#f6f6f6) under white matplotlib PNGs: a white rectangle floating
+   on grey. White card, hairline border, plot sits flush.
+   The 2-column grid is deliberate (side-by-side comparison) and is
+   NOT touched.
+   ================================================================== */
+      .grid-results {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(640px, 1fr));
+        gap: var(--s4);
+        margin-top: var(--s4);
+      }
+      .result-card {
+        padding: var(--s3) var(--s4) var(--s4);
+        border: 1px solid var(--rule);
+        border-radius: 3px;
+        background: var(--surface);
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+        overflow-wrap: break-word;
+      }
+      .result-card.error {
+        background: var(--err-soft);
+        border-color: #f0c3c5;
+        color: var(--err);
+      }
+      .result-card h3 {
+        margin: 0 0 var(--s2);
+        padding-bottom: var(--s2);
+        border-bottom: 1px solid var(--rule);
+        font-family: var(--sans);
+        font-size: var(--t-md);
+        font-weight: 600;
+        color: var(--ink);
+        letter-spacing: 0.01em;
+      }
+      .result-card h4 {
+        margin: var(--s3) 0 var(--s1);
+        font-size: var(--t-sm);
+        color: var(--ink);
+      }
+      .result-card p,
+      .result-card ul {
+        max-width: none;
+      }
+      .result-card pre {
+        white-space: pre-wrap;
+        margin: 0;
+        font-family: var(--mono);
+        font-size: var(--t-xs);
+        line-height: 1.5;
+        overflow-wrap: break-word;
+      }
+      .result-card img {
+        max-width: 100%;
+        margin-top: var(--s2);
+        border: 1px solid var(--rule);
+        border-radius: 2px;
+        display: block;
+        background: var(--surface);
+      }
+      .result-card a {
+        color: var(--link);
+      }
+      .result-card table.summary {
+        font-size: var(--t-xs);
+      }
+      .result-card .card-actions {
+        margin-top: var(--s3);
+        padding: var(--s2) var(--s3);
+        background: var(--surface-2);
+        border: 1px solid var(--rule);
+        border-radius: 2px;
+        font-size: var(--t-xs);
+        color: var(--ink-2);
+      }
+      .result-card .card-actions a {
+        margin-right: var(--s2);
+      }
+
+      /* Download strip ---------------------------------------------------- */
+      .downloads-box {
+        margin-top: var(--s3);
+        padding: var(--s2) var(--s3);
+        background: var(--surface-2);
+        border: 1px solid var(--rule);
+        border-radius: 2px;
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+      }
+      .downloads-box:empty {
+        display: none;
+      }
+      .downloads-box div {
+        margin: 0.15rem 0;
+      }
+      .downloads-box a {
+        margin-right: var(--s3);
+      }
+
+      /* ==================================================================
+   Cross-station CCDF matrix - 12 months x 4 stations.
+   This is the best piece of the interface and the one most looked
+   at. Nothing moves; the header row and the month column are simply
+   pinned, because past the third row you could no longer tell which
+   column was which station.
+   ================================================================== */
+      table.ccdf-grid {
+        background: var(--surface);
+      }
+      table.ccdf-grid td,
+      table.ccdf-grid th {
+        text-align: center;
+      }
+      table.ccdf-grid thead th {
+        position: sticky;
+        top: var(--topbar-h);
+        z-index: 3;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--rule-2);
+        font-size: var(--t-sm);
+        letter-spacing: 0.03em;
+      }
+      table.ccdf-grid tbody th,
+      table.ccdf-grid tbody td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: var(--surface-2);
+        border-right: 1px solid var(--rule-2);
+        font-size: var(--t-sm);
+      }
+      table.ccdf-grid thead th:first-child {
+        z-index: 4;
+      }
+      table.ccdf-grid img {
+        width: 100%;
+        max-width: 280px;
+        height: auto;
+        border: 1px solid var(--rule);
+        border-radius: 2px;
+      }
+      table.ccdf-grid td.missing {
+        color: var(--ink-3);
+        font-size: var(--t-lg);
+      }
+
+      /* ==================================================================
+   Small parts
+   ================================================================== */
+      .month-picker,
+      .station-filter {
+        margin: var(--s3) 0;
+      }
+      .month-picker label,
+      .station-filter label {
+        display: inline-flex;
+        align-items: center;
+        width: auto;
+        margin: 0 var(--s4) var(--s2) 0;
+        font-size: var(--t-sm);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .month-picker input,
+      .station-filter input {
+        width: auto;
+        height: auto;
+        margin-top: 0;
+      }
+
+      .field-note {
+        margin: var(--s2) 0 0;
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+        min-height: 1.1em;
+      }
+      .field-status {
+        margin: var(--s2) 0 0;
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+        min-height: 1.1em;
+      }
+      .field-status.error {
+        color: var(--err);
+      }
+
+      details {
+        margin: var(--s4) 0;
+      }
+      summary.subsection-title {
+        font-size: var(--t-lg);
+        font-weight: 600;
+        cursor: pointer;
+        margin: var(--s3) 0;
+        padding: var(--s2) var(--s3);
+        background: var(--surface-2);
+        border: 1px solid var(--rule);
+        border-radius: 2px;
+        list-style-position: inside;
+      }
+      summary.subsection-title:hover {
+        border-color: var(--ink-3);
+      }
+
+      /* The six hand-copied inline separators become one class */
+      .subsection {
+        margin-top: var(--s5);
+        padding-top: var(--s4);
+        border-top: 1px solid var(--rule);
+      }
+
+      /* ==================================================================
+   Print - the figures end up in a thesis. Drop the chrome, never cut
+   a card in half.
+   ================================================================== */
+      @media print {
+        :root {
+          --topbar-h: 0rem;
+        }
+        .topbar,
+        .steps-nav,
+        button,
+        .downloads-box {
+          display: none !important;
+        }
+        body {
+          background: #fff;
+          max-width: none;
+          padding: 0;
+          font-size: 11pt;
+        }
+        section {
+          border: 1px solid #bbb;
+          break-inside: avoid;
+          page-break-inside: avoid;
+          margin-bottom: 12pt;
+        }
+        .step-head {
+          background: #fff;
+        }
+        .result-card,
+        table.summary tr {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+        .grid-results {
+          grid-template-columns: 1fr 1fr;
+        }
+        table.summary thead th,
+        table.ccdf-grid thead th {
+          position: static;
+        }
+        details[open] > summary {
+          list-style: none;
+        }
+        a {
+          color: #000;
+          text-decoration: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      /* Narrow screens: the tool is desktop-first (the whole point is
+   comparing plots side by side), but the chrome should not break. */
+      @media (max-width: 900px) {
+        :root {
+          --topbar-h: 6rem;
+        }
+        .topbar-inner {
+          flex-wrap: wrap;
+          align-content: center;
+          gap: var(--s2) var(--s4);
+          padding: var(--s2) var(--s4);
+        }
+        .steps-nav {
+          order: 3;
+          width: 100%;
+          margin-right: 0;
+        }
+        body {
+          padding-left: var(--s4);
+          padding-right: var(--s4);
+        }
+        section > *:not(.step-head) {
+          margin-left: var(--s4);
+          margin-right: var(--s4);
+        }
+        .step-head {
+          padding: var(--s3) var(--s4);
+        }
+      }
+
+      /* ==================================================================
+   CORRECTIFS mesures au navigateur (et non a l'oeil)
+   ================================================================== */
+
+      /* 2. La matrice 12 x 4 devient un VOLET a en-tetes figes.
+   Le JS l'enveloppe dans un conteneur overflow-x:auto, ce qui en
+   fait un conteneur de defilement : position:sticky s'y accrochait au
+   lieu de s'accrocher a la page, donc l'en-tete partait quand meme.
+   Plutot que de retirer cet overflow (le tableau deborderait sur les
+   ecrans etroits), on le borne en hauteur : les en-tetes se figent
+   alors DANS le volet - l'idiome "figer les volets" d'un tableur, que
+   tout ingenieur lit d'instinct. Effet de bord bienvenu : la page
+   raccourcit d'environ 2 000 px. */
+      #step2-ccdf-grid-container > div {
+        max-height: calc(100vh - 9rem);
+        overflow: auto;
+        border: 1px solid var(--rule);
+        border-radius: 3px;
+        overscroll-behavior: contain;
+      }
+      #step2-ccdf-grid-container table.ccdf-grid thead th {
+        top: 0;
+      }
+      #step2-ccdf-grid-container table.ccdf-grid {
+        margin: 0;
+      }
+
+      /* 3. Rythme vertical resserre : la page avait grandi de 26 % avec les
+   en-tetes de section. Les figures sont incompressibles, le chrome non. */
+      section {
+        margin-bottom: var(--s4);
+        padding-bottom: var(--s4);
+      }
+      .step-head {
+        padding: var(--s3) var(--s5);
+        margin-bottom: var(--s3);
+      }
+      h3 {
+        margin-top: var(--s4);
+      }
+      table.summary {
+        margin: var(--s3) 0;
+      }
+      table.summary th,
+      table.summary td {
+        padding: var(--s2) var(--s3);
+      }
+      .result-card {
+        padding: var(--s3);
+      }
+      .grid-results {
+        gap: var(--s3);
+        margin-top: var(--s3);
+      }
+      details {
+        margin: var(--s3) 0;
+      }
+
+      /* 4. Etat vide : le tableau de resume affichait son en-tete et une
+   bande vide avant tout calcul. Tant qu'il n'a pas de ligne, il ne
+   dit rien - donc il ne s'affiche pas. */
+      table.summary:not(:has(tbody tr)) {
+        display: none;
+      }
+
+      /* ==================================================================
+   Plot viewer.
+   The PNGs are 2250-3250 px wide and the matrix shows them at 280 px:
+   eight times smaller than they are, so the axes and the legend are
+   not readable. The thumbnails were ALREADY links opening the file in
+   a new tab - the capability existed, it was just invisible and it
+   made you leave the page mid-demo. This intercepts that link and
+   shows the plot in place; the link to the raw file is still offered
+   inside the viewer, so nothing is taken away.
+   ================================================================== */
+      .result-card img,
+      #step2-ccdf-grid-container img {
+        cursor: zoom-in;
+      }
+
+      #plot-zoom {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: none;
+        place-items: center;
+        padding: var(--s6) var(--s5) var(--s5);
+        background: rgba(10, 13, 15, 0.9);
+      }
+      #plot-zoom[data-open="true"] {
+        display: grid;
+      }
+      #plot-zoom figure {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--s3);
+        max-width: 100%;
+        min-width: 0;
+      }
+      #plot-zoom img {
+        max-width: 96vw;
+        max-height: 84vh;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+        background: var(--surface);
+        border-radius: 2px;
+      }
+      #plot-zoom figcaption {
+        color: #e8ecef;
+        font-family: var(--mono);
+        font-size: var(--t-sm);
+        text-align: center;
+      }
+      #plot-zoom figcaption a {
+        color: #9fc4ec;
+        margin-left: var(--s3);
+      }
+      #plot-zoom .zoom-close {
+        position: absolute;
+        top: var(--s4);
+        right: var(--s5);
+        color: #fff;
+        background: transparent;
+        border-color: rgba(255, 255, 255, 0.4);
+        font-weight: 400;
+      }
+      #plot-zoom .zoom-close:hover {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: #fff;
+      }
+      @media print {
+        #plot-zoom {
+          display: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-title">TFM GNSS pipeline <span>local</span></div>
+        <nav class="steps-nav" aria-label="Pipeline steps">
+          <a href="#step0"><b>0</b>Data</a>
+          <a href="#step1"><b>1</b>Completeness</a>
+          <a href="#step2"><b>2</b>CCDF</a>
+          <a href="#step3"><b>3</b>Daily</a>
+          <a href="#step4"><b>4</b>Hourly</a>
+          <a href="#step5"><b>5</b>Daypart</a>
+          <a href="#step6"><b>6</b>Heatmaps</a>
+        </nav>
+        <div class="topbar-setting">
+          <label for="ndat-mode">Ndat criterion</label>
+          <select id="ndat-mode">
+            <option value="eq60" selected>Ndat = 60 (TFM default)</option>
+            <option value="ge30">30 &le; Ndat &le; 60</option>
+            <option value="all">All Ndat</option>
+            <option value="lt30">Ndat &lt; 30</option>
+          </select>
+        </div>
+      </div>
+    </header>
+    <h1>TFM GNSS pipeline - local interface</h1>
+    <p class="page-intro">
+      Each section runs one pipeline step by reusing the exact same functions as
+      its console script - results are saved to the same place as always
+      (<code>results/&lt;station&gt;/&lt;year&gt;/...</code>).
+      <strong>Step 0 runs first</strong> and builds the Parquet files every
+      other step reads. Steps 1-6 are connected, each with its cross-station
+      comparator (X.2) where one exists. The <strong>Ndat criterion</strong> in
+      the bar above applies to Steps 2-6; Step 1 completeness is independent of
+      Ndat.
+    </p>
+
+    <section id="step0">
+      <div class="step-head">
+        <span class="step-num">00</span>
+        <h2>Step 0 - Input data preparation</h2>
+        <span class="dep none">No prerequisite</span>
+        <span class="step-state" aria-live="polite">Not run</span>
+      </div>
+
+      <p class="intro" style="margin-top: 0.75rem">
+        Converts the daily RAW files into
+        <strong>one Parquet file per station</strong> under
+        <code>results/&lt;station&gt;/&lt;year&gt;/0_parquet/</code> - the form
+        every other step reads. It performs
+        <strong>no scientific analysis</strong>: nothing is filtered or removed,
+        and the QC flag columns it writes are informational only. Every
+        configured station is always processed in a single pass, because each
+        daily RAW file already mixes all stations together.
+      </p>
+
+      <div class="dir-field">
+        <label for="step0-raw-dir">RAW data folder</label>
+        <div class="dir-row">
+          <button id="step0-browse" class="btn-quiet" onclick="browseRawDir()">
+            Browse...
+          </button>
+          <input id="step0-raw-dir" type="text" value="datos_Estudio" />
+        </div>
+        <p class="field-note">
+          The folder holding the daily RAW files (<code>rotiS4.2024001</code>
+          ... <code>rotiS4.2024366</code>). Relative paths resolve against the
+          folder the server was started from, same convention as
+          <code>results/</code>; an absolute path
+          (<code>D:\data\datos_2024</code>) also works.
+        </p>
+        <p id="step0-status" class="field-status"></p>
+      </div>
+
+      <div class="grid">
+        <label
+          >Year
+          <input id="step0-year" type="number" value="2024" />
+        </label>
+        <label
+          >DoY start
+          <input id="step0-doy-start" type="number" value="1" />
+        </label>
+        <label
+          >DoY end
+          <input id="step0-doy-end" type="number" value="366" />
+        </label>
+      </div>
+      <div class="actions">
+        <button onclick="runStep0()">Prepare data</button>
+        <button class="clear-btn" onclick="clearGrid('step0-grid')">
+          Clear
+        </button>
+      </div>
+
+      <table class="summary" id="step0-summary">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Rows</th>
+            <th>First DoY</th>
+            <th>Last DoY</th>
+            <th>Days with data</th>
+            <th>UTC offset [h]</th>
+          </tr>
+        </thead>
+        <tbody id="step0-summary-body"></tbody>
+      </table>
+      <div id="step0-downloads" class="downloads-box"></div>
+
+      <div id="step0-grid" class="grid-results"></div>
+    </section>
+
+    <section id="step1">
+      <div class="step-head">
+        <span class="step-num">01</span>
+        <h2>Step 1 - Completeness</h2>
+        <span class="dep">Requires Step 0</span>
+        <span class="step-state" aria-live="polite">Not run</span>
+      </div>
+
+      <p class="intro" style="margin-top: 0.75rem">
+        Completeness measures
+        <strong>temporal data availability, not scientific quality</strong>: a
+        day is "valid" if at least the coverage threshold (75% by default) of
+        its 1440 minutes has some observation recorded - it says nothing about
+        whether those ROTI values themselves are reliable (that is a separate
+        quality control step, not applied to any result yet).
+        <strong>DoY</strong> = day of year (1-366).
+      </p>
+
+      <div class="grid">
+        <label
+          >Station
+          <select id="step1-station">
+            <option>UNSA</option>
+            <option>KOUG</option>
+            <option>WHIT</option>
+            <option>YELL</option>
+          </select>
+        </label>
+        <label
+          >Year
+          <input id="step1-year" type="number" value="2024" />
+        </label>
+        <label
+          >DoY start
+          <input id="step1-doy-start" type="number" value="1" />
+        </label>
+        <label
+          >DoY end
+          <input id="step1-doy-end" type="number" value="366" />
+        </label>
+        <label
+          >Coverage threshold
+          <input id="step1-th-cov" type="number" step="0.01" value="0.75" />
+        </label>
+      </div>
+      <div class="actions">
+        <button onclick="runStep1()">Run</button>
+        <button class="clear-btn" onclick="clearGrid('step1-grid')">
+          Clear
+        </button>
+      </div>
+      <table class="summary" id="step1-summary">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Year</th>
+            <th>Valid days</th>
+            <th>Invalid days</th>
+            <th>Valid-day rate [%]</th>
+            <th>Overall temporal coverage [%]</th>
+            <th>Invalid days [0 min / partial]</th>
+            <th>Longest invalid streak [days]</th>
+            <th>Best month</th>
+            <th>Worst month</th>
+          </tr>
+        </thead>
+        <tbody id="step1-summary-body"></tbody>
+      </table>
+      <div id="step1-explanation"></div>
+      <div id="step1-downloads" class="downloads-box"></div>
+
+      <div id="step1-grid" class="grid-results"></div>
+    </section>
+
+    <section id="step2">
+      <div class="step-head">
+        <span class="step-num">02</span>
+        <h2>Step 2 - Monthly CCDF and percentiles</h2>
+        <span class="dep">Requires Step 1</span>
+        <span class="step-state" aria-live="polite">Not run</span>
+      </div>
+
+      <h3>2A. Monthly percentile analysis</h3>
+      <p class="intro">
+        <strong>Purpose:</strong> Step 2 characterizes the monthly distribution
+        and variability of ROTI L1 using only the days classified as valid in
+        Step 1. Monthly p90 and p99 describe the upper part of the ROTI L1
+        distribution and allow its seasonal variability to be compared across
+        the year.
+      </p>
+      <p class="intro">
+        Requires Step 1 to already exist for that station (Step 2 reads its
+        coverage CSV).
+      </p>
+
+      <div class="grid">
+        <label
+          >Station
+          <select id="step2-station">
+            <option>UNSA</option>
+            <option>KOUG</option>
+            <option>WHIT</option>
+            <option>YELL</option>
+          </select>
+        </label>
+        <label
+          >Year
+          <input id="step2-year" type="number" value="2024" />
+        </label>
+        <label
+          >DoY start
+          <input id="step2-doy-start" type="number" value="1" />
+        </label>
+        <label
+          >DoY end
+          <input id="step2-doy-end" type="number" value="366" />
+        </label>
+        <label
+          >Coverage threshold
+          <input id="step2-th-cov" type="number" step="0.01" value="0.75" />
+        </label>
+      </div>
+      <div class="actions">
+        <button onclick="runStep2()">Run</button>
+        <button class="clear-btn" onclick="clearGrid('step2-grid')">
+          Clear
+        </button>
+      </div>
+      <table class="summary" id="step2-summary">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Year</th>
+            <th>p90 summary</th>
+            <th>p90 range [TECU/min]</th>
+            <th>p99 summary</th>
+            <th>p99 range [TECU/min]</th>
+          </tr>
+        </thead>
+        <tbody id="step2-summary-body"></tbody>
+      </table>
+      <div id="step2-explanation"></div>
+      <div id="step2-downloads" class="downloads-box"></div>
+
+      <div id="step2-grid" class="grid-results"></div>
+
+      <div class="subsection">
+        <h3>2B. Monthly CCDF analysis</h3>
+        <p class="intro">
+          <strong>Purpose:</strong> The CCDF shows the probability of observing
+          ROTI L1 values equal to or greater than a given value. It provides the
+          full upper-tail distribution behind the monthly percentiles instead of
+          reducing each month to only p90 and p99.
+        </p>
+        <h4 style="margin-bottom: 0.3rem">How to read</h4>
+        <ul style="margin-top: 0">
+          <li>CCDF = 0.1 corresponds approximately to p90.</li>
+          <li>CCDF = 0.01 corresponds approximately to p99.</li>
+          <li>The Y axis is logarithmic.</li>
+          <li>
+            <code>n</code> in the legend is the number of ROTI L1 observations
+            used for that curve.
+          </li>
+          <li>
+            Within-station comparison overlays selected months from the same
+            station.
+          </li>
+        </ul>
+
+        <details id="step2-ccdf-grid-details">
+          <summary class="subsection-title">
+            Individual monthly CCDF &mdash; Cross-station grid
+          </summary>
+          <p class="intro">
+            All individual monthly CCDF plots already saved by Step 2, for the
+            Year/DoY/threshold set above - 12 months &times; 4 stations. Loads
+            once when you open this section, does not recompute anything.
+            &ldquo;&mdash;&rdquo; means that station/month has no Step 2 output
+            yet at these settings.
+          </p>
+
+          <div class="station-filter" id="step2-ccdf-grid-station-filter">
+            <label
+              ><input type="checkbox" checked data-station-filter="UNSA" />
+              UNSA</label
+            >
+            <label
+              ><input type="checkbox" checked data-station-filter="KOUG" />
+              KOUG</label
+            >
+            <label
+              ><input type="checkbox" checked data-station-filter="WHIT" />
+              WHIT</label
+            >
+            <label
+              ><input type="checkbox" checked data-station-filter="YELL" />
+              YELL</label
+            >
+          </div>
+
+          <div id="step2-ccdf-grid-container">Loading...</div>
+        </details>
+
+        <h4 style="margin-top: 1.5rem">
+          Monthly CCDF comparison (within station)
+        </h4>
+        <p class="intro">
+          Overlays the CCDF of the months you pick below, for the station
+          selected - one color per month. Year/DoY/threshold come from the form
+          at the top.
+        </p>
+
+        <label style="max-width: 200px"
+          >Station
+          <select id="step2-ccdf-station">
+            <option>UNSA</option>
+            <option>KOUG</option>
+            <option>WHIT</option>
+            <option>YELL</option>
+          </select>
+        </label>
+
+        <div class="month-picker" id="step2-ccdf-months">
+          <label><input type="checkbox" value="1" /> Jan</label>
+          <label><input type="checkbox" value="2" /> Feb</label>
+          <label><input type="checkbox" value="3" /> Mar</label>
+          <label><input type="checkbox" value="4" /> Apr</label>
+          <label><input type="checkbox" value="5" /> May</label>
+          <label><input type="checkbox" value="6" /> Jun</label>
+          <label><input type="checkbox" value="7" /> Jul</label>
+          <label><input type="checkbox" value="8" /> Aug</label>
+          <label><input type="checkbox" value="9" /> Sep</label>
+          <label><input type="checkbox" value="10" /> Oct</label>
+          <label><input type="checkbox" value="11" /> Nov</label>
+          <label><input type="checkbox" value="12" /> Dec</label>
+        </div>
+        <div class="actions">
+          <button
+            type="button"
+            class="btn-quiet"
+            onclick="setMonthCheckboxes('step2-ccdf-months', true)"
+          >
+            Select all
+          </button>
+          <button
+            type="button"
+            class="btn-quiet"
+            onclick="setMonthCheckboxes('step2-ccdf-months', false)"
+          >
+            Clear selection
+          </button>
+          <button onclick="runStep2CcdfCompare()">Compare months</button>
+          <button
+            class="clear-btn"
+            onclick="clearGrid('step2-ccdf-compare-grid')"
+          >
+            Clear
+          </button>
+        </div>
+        <p
+          id="step2-ccdf-compare-status"
+          class="field-status"
+          aria-live="polite"
+        ></p>
+
+        <div id="step2-ccdf-compare-grid" class="grid-results"></div>
+      </div>
+
+      <div class="subsection">
+        <h3>2C. Cross-station analysis</h3>
+        <p class="intro">
+          <strong>Purpose:</strong> This section compares the monthly ROTI L1
+          distributions between stations using the outputs already generated by
+          Step 2.
+        </p>
+        <h4 style="margin-bottom: 0.3rem">Interpretation notes</h4>
+        <ul style="margin-top: 0">
+          <li>
+            Monthly percentile comparison compares absolute p90/p99 values in
+            TECU/min between stations.
+          </li>
+          <li><code>n_days</code> indicates monthly temporal support.</li>
+          <li>Low-support status is station-specific.</li>
+          <li>
+            Cross-station CCDF compares the complete monthly distributions for
+            the selected station set and month.
+          </li>
+        </ul>
+
+        <h4 style="margin-top: 1.5rem">Cross-station monthly percentiles</h4>
+        <p class="intro">
+          Compares whichever stations already have Step 2 output for the
+          Year/DoY/ threshold set above - it ignores the Station field and does
+          not recompute anything, so run Step 2 for a station first if it is
+          missing here.
+        </p>
+        <div class="actions">
+          <button onclick="runStep2_2()">Compare all stations</button>
+          <button class="clear-btn" onclick="clearGrid('step22-grid')">
+            Clear
+          </button>
+        </div>
+        <div id="step22-grid" class="grid-results"></div>
+
+        <h4 style="margin-top: 1.5rem">Cross-station CCDF comparison</h4>
+        <p class="intro">
+          Overlays the CCDF of the stations you pick below, for one month -
+          color fixed per station. Year/DoY/threshold come from the form at the
+          top.
+        </p>
+
+        <div class="station-filter" id="step2-cross-station-stations">
+          <label><input type="checkbox" checked value="UNSA" /> UNSA</label>
+          <label><input type="checkbox" checked value="KOUG" /> KOUG</label>
+          <label><input type="checkbox" checked value="WHIT" /> WHIT</label>
+          <label><input type="checkbox" checked value="YELL" /> YELL</label>
+        </div>
+
+        <label style="max-width: 200px"
+          >Month
+          <select id="step2-cross-station-month">
+            <option value="1">Jan</option>
+            <option value="2">Feb</option>
+            <option value="3">Mar</option>
+            <option value="4">Apr</option>
+            <option value="5">May</option>
+            <option value="6">Jun</option>
+            <option value="7">Jul</option>
+            <option value="8">Aug</option>
+            <option value="9">Sep</option>
+            <option value="10">Oct</option>
+            <option value="11">Nov</option>
+            <option value="12">Dec</option>
+          </select>
+        </label>
+
+        <div class="actions">
+          <button onclick="runStep2CrossStationCcdf()">Compare stations</button>
+          <button
+            class="clear-btn"
+            onclick="clearGrid('step2-cross-station-grid')"
+          >
+            Clear
+          </button>
+        </div>
+        <p
+          id="step2-cross-station-status"
+          class="field-status"
+          aria-live="polite"
+        ></p>
+
+        <div id="step2-cross-station-grid" class="grid-results"></div>
+      </div>
+    </section>
+
+    <section id="step3">
+      <div class="step-head">
+        <span class="step-num">03</span>
+        <h2>Step 3 - Daily variability</h2>
+        <span class="dep">Requires Step 1</span>
+        <span class="step-state" aria-live="polite">Not run</span>
+      </div>
+
+      <p class="intro">
+        Requires Step 1 to already exist for that station (Step 3 reads its
+        coverage CSV). Annual p90/p99 thresholds are computed once from all
+        valid days in the year; daily frequency then measures what share of each
+        day's own observations exceed those fixed annual thresholds - it is not
+        a per-day percentile.
+      </p>
+
+      <div class="grid">
+        <label
+          >Station
+          <select id="step3-station">
+            <option>UNSA</option>
+            <option>KOUG</option>
+            <option>WHIT</option>
+            <option>YELL</option>
+          </select>
+        </label>
+        <label
+          >Year
+          <input id="step3-year" type="number" value="2024" />
+        </label>
+        <label
+          >DoY start
+          <input id="step3-doy-start" type="number" value="1" />
+        </label>
+        <label
+          >DoY end
+          <input id="step3-doy-end" type="number" value="366" />
+        </label>
+        <label
+          >Coverage threshold
+          <input id="step3-th-cov" type="number" step="0.01" value="0.75" />
+        </label>
+      </div>
+      <div class="actions">
+        <button onclick="runStep3()">Run</button>
+        <button class="clear-btn" onclick="clearGrid('step3-grid')">
+          Clear
+        </button>
+      </div>
+      <table class="summary" id="step3-summary">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Year</th>
+            <th>n_values</th>
+            <th>p90 annual [TECU/min]</th>
+            <th>p99 annual [TECU/min]</th>
+            <th>Frequency &gt;=p90 [%]</th>
+            <th>Frequency &gt;=p99 [%]</th>
+          </tr>
+        </thead>
+        <tbody id="step3-summary-body"></tbody>
+      </table>
+      <div id="step3-downloads" class="downloads-box"></div>
+
+      <div id="step3-grid" class="grid-results"></div>
+
+      <div class="subsection">
+        <h3>Cross-station daily comparison</h3>
+        <p class="intro">
+          Compares whichever stations already have Step 3 output for the
+          Year/DoY range set above - reads what Step 3 already saved, does not
+          recompute anything. Shows each station's annual thresholds, its day of
+          maximum p90/p99 exceedance frequency, and which dates show up in the
+          top-N days of 2 or more stations at once. A shared date means both
+          stations were elevated relative to their own annual threshold - not
+          that they had the same absolute ROTI L1 value that day.
+        </p>
+
+        <label style="max-width: 200px"
+          >Top N days
+          <input id="step3-top-n" type="number" value="10" min="1" />
+        </label>
+
+        <div class="actions">
+          <button onclick="runStep3Comparison()">Compare stations</button>
+          <button
+            class="clear-btn"
+            onclick="clearGrid('step3-comparison-grid')"
+          >
+            Clear
+          </button>
+        </div>
+        <div id="step3-comparison-grid" class="grid-results"></div>
+      </div>
+    </section>
+
+    <section id="step4">
+      <div class="step-head">
+        <span class="step-num">04</span>
+        <h2>Step 4 - Hourly variability (local hour)</h2>
+        <span class="dep">Requires Steps 1 &amp; 3</span>
+        <span class="step-state" aria-live="polite">Not run</span>
+      </div>
+
+      <p class="intro">
+        Requires Step 1 (coverage) AND Step 3 (annual thresholds) to already
+        exist for that station - Step 4 reads both. Frequency is measured by
+        local hour (each station's own fixed UTC offset, CLAUDE.md &sect;6),
+        against the same annual p90/p99 thresholds Step 3 already computed - not
+        a new percentile per hour.
+      </p>
+
+      <div class="grid">
+        <label
+          >Station
+          <select id="step4-station">
+            <option>UNSA</option>
+            <option>KOUG</option>
+            <option>WHIT</option>
+            <option>YELL</option>
+          </select>
+        </label>
+        <label
+          >Year
+          <input id="step4-year" type="number" value="2024" />
+        </label>
+        <label
+          >DoY start
+          <input id="step4-doy-start" type="number" value="1" />
+        </label>
+        <label
+          >DoY end
+          <input id="step4-doy-end" type="number" value="366" />
+        </label>
+        <label
+          >Coverage threshold
+          <input id="step4-th-cov" type="number" step="0.01" value="0.75" />
+        </label>
+      </div>
+      <div class="actions">
+        <button onclick="runStep4()">Run</button>
+        <button class="clear-btn" onclick="clearGrid('step4-grid')">
+          Clear
+        </button>
+      </div>
+      <table class="summary" id="step4-summary">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Year</th>
+            <th>Max p90 hour(s)</th>
+            <th>Max p90 freq [%]</th>
+            <th>Support</th>
+            <th>Max p99 hour(s)</th>
+            <th>Max p99 freq [%]</th>
+            <th>Support</th>
+          </tr>
+        </thead>
+        <tbody id="step4-summary-body"></tbody>
+      </table>
+      <div id="step4-downloads" class="downloads-box"></div>
+
+      <div id="step4-grid" class="grid-results"></div>
+
+      <div class="subsection">
+        <h3>Cross-station hourly comparison</h3>
+        <p class="intro">
+          Compares whichever stations already have Step 4 output for the
+          Year/DoY range set above - reads what 4.2-hourly_comparison.py already
+          saved, does not recompute anything. Each station uses its own annual
+          p90/p99 threshold, so this compares relative exceedance frequency by
+          local hour between stations, not absolute ROTI L1 magnitude.
+        </p>
+
+        <p class="intro" style="margin-top: 0.5rem">
+          <strong>Reading note:</strong> local hour is cyclic - 23h and 00h are
+          consecutive, not the two ends of a line. A station elevated at both
+          edges of the 0-23 axis may reflect one continuous nocturnal structure,
+          not two separate peaks.
+        </p>
+
+        <div class="actions">
+          <button onclick="runStep4Comparison()">Compare stations</button>
+          <button
+            class="clear-btn"
+            onclick="clearGrid('step4-comparison-grid')"
+          >
+            Clear
+          </button>
+        </div>
+        <div id="step4-comparison-grid" class="grid-results"></div>
+      </div>
+    </section>
+
+    <section id="step5">
+      <div class="step-head">
+        <span class="step-num">05</span>
+        <h2>Step 5 - Daypart variability</h2>
+        <span class="dep">Requires Steps 1 &amp; 3</span>
+        <span class="step-state" aria-live="polite">Not run</span>
+      </div>
+
+      <p class="intro">
+        Requires Step 1 (coverage) AND Step 3 (annual thresholds) to already
+        exist for that station - Step 5 reads both. Frequency is measured by 4
+        fixed local-time dayparts (Night 0-6, Morning 6-12, Afternoon 12-18,
+        Evening 18-24), against the same annual p90/p99 thresholds Step 3
+        already computed - not a new percentile per daypart.
+      </p>
+
+      <div class="grid">
+        <label
+          >Station
+          <select id="step5-station">
+            <option>UNSA</option>
+            <option>KOUG</option>
+            <option>WHIT</option>
+            <option>YELL</option>
+          </select>
+        </label>
+        <label
+          >Year
+          <input id="step5-year" type="number" value="2024" />
+        </label>
+        <label
+          >DoY start
+          <input id="step5-doy-start" type="number" value="1" />
+        </label>
+        <label
+          >DoY end
+          <input id="step5-doy-end" type="number" value="366" />
+        </label>
+        <label
+          >Coverage threshold
+          <input id="step5-th-cov" type="number" step="0.01" value="0.75" />
+        </label>
+      </div>
+      <div class="actions">
+        <button onclick="runStep5()">Run</button>
+        <button class="clear-btn" onclick="clearGrid('step5-grid')">
+          Clear
+        </button>
+      </div>
+      <table class="summary" id="step5-summary">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Year</th>
+            <th>Dominant daypart (p90)</th>
+            <th>Freq [%]</th>
+            <th>Support</th>
+            <th>Dominant daypart (p99)</th>
+            <th>Freq [%]</th>
+            <th>Support</th>
+          </tr>
+        </thead>
+        <tbody id="step5-summary-body"></tbody>
+      </table>
+      <div id="step5-downloads" class="downloads-box"></div>
+
+      <div id="step5-grid" class="grid-results"></div>
+
+      <div class="subsection">
+        <h3>Cross-station daypart comparison</h3>
+        <p class="intro">
+          Compares whichever stations already have Step 5 output for the
+          Year/DoY range set above - reads what 5.2-daypart_comparison.py
+          already saved, does not recompute anything. Each station uses its own
+          annual p90/p99 threshold, so this compares relative exceedance
+          frequency by daypart between stations, not absolute ROTI L1 magnitude.
+        </p>
+
+        <div class="actions">
+          <button onclick="runStep5Comparison()">Compare stations</button>
+          <button
+            class="clear-btn"
+            onclick="clearGrid('step5-comparison-grid')"
+          >
+            Clear
+          </button>
+        </div>
+        <div id="step5-comparison-grid" class="grid-results"></div>
+      </div>
+    </section>
+
+    <section id="step6">
+      <div class="step-head">
+        <span class="step-num">06</span>
+        <h2>Step 6 - Month-hour heatmaps</h2>
+        <span class="dep">Requires Steps 1 &amp; 3</span>
+        <span class="step-state" aria-live="polite">Not run</span>
+      </div>
+
+      <p class="intro">
+        Requires Step 1 (coverage) AND Step 3 (annual thresholds) to already
+        exist for that station - Step 6 reads both. Frequency is measured on a
+        full 12 (month) &times; 24 (local hour) grid against the same annual
+        p90/p99 thresholds Step 3 already computed. The Top-10 tables below list
+        the single highest-frequency month-hour cells - a reproducible result.
+        Grouping adjacent cells into ranges (e.g. "22h-01h") is still a manual
+        step, not done by this page.
+      </p>
+
+      <p class="intro" style="margin-top: 0.5rem">
+        <strong
+          >Color scales are adjusted independently for each station.</strong
+        >
+        Compare the numerical frequencies/colorbars, not color intensity alone,
+        across stations.
+      </p>
+
+      <div class="grid">
+        <label
+          >Station
+          <select id="step6-station">
+            <option>UNSA</option>
+            <option>KOUG</option>
+            <option>WHIT</option>
+            <option>YELL</option>
+          </select>
+        </label>
+        <label
+          >Year
+          <input id="step6-year" type="number" value="2024" />
+        </label>
+        <label
+          >DoY start
+          <input id="step6-doy-start" type="number" value="1" />
+        </label>
+        <label
+          >DoY end
+          <input id="step6-doy-end" type="number" value="366" />
+        </label>
+        <label
+          >Coverage threshold
+          <input id="step6-th-cov" type="number" step="0.01" value="0.75" />
+        </label>
+      </div>
+      <div class="actions">
+        <button onclick="runStep6()">Run</button>
+        <button class="clear-btn" onclick="clearGrid('step6-grid')">
+          Clear
+        </button>
+      </div>
+      <div id="step6-downloads" class="downloads-box"></div>
+
+      <div id="step6-grid" class="grid-results"></div>
+
+      <div class="subsection">
+        <h3>Cross-station month-hour maxima</h3>
+        <p class="intro">
+          Compares whichever stations already have Step 6 output for the
+          Year/DoY/coverage threshold set above - reads the rank-1 row already
+          saved in each station's Top-10 p90/p99 CSVs, does not recompute
+          anything. Each station uses its own annual p90/p99 threshold, so this
+          compares relative exceedance frequency, not absolute ROTI L1
+          magnitude.
+        </p>
+
+        <div class="actions">
+          <button onclick="runStep6CrossStationMaxima()">
+            Compare stations
+          </button>
+          <button class="clear-btn" onclick="clearGrid('step6-maxima-grid')">
+            Clear
+          </button>
+        </div>
+        <div id="step6-maxima-grid" class="grid-results"></div>
+      </div>
+    </section>
+
+    <script>
+      // Purely visual: reflects, in the section header, the state of the
+      // request runStep() is already making. Reads nothing, decides
+      // nothing, changes no payload - if it were deleted the pipeline
+      // would behave identically.
+
+      // Highlights the step you are currently looking at in the top bar.
+      // Purely visual, and it fails silently on old engines: without it
+      // the nav simply never marks a current item.
+      (function markCurrentStep() {
+        const links = new Map(
+          [...document.querySelectorAll(".steps-nav a")].map((a) => [
+            a.getAttribute("href").slice(1),
+            a,
+          ]),
+        );
+        if (!("IntersectionObserver" in window) || !links.size) return;
+        const seen = new Set();
+        const observer = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((e) => {
+              if (e.isIntersecting) seen.add(e.target.id);
+              else seen.delete(e.target.id);
+            });
+            links.forEach((a, id) => a.classList.remove("current"));
+            const first = [...links.keys()].find((id) => seen.has(id));
+            if (first) links.get(first).classList.add("current");
+          },
+          { rootMargin: "-25% 0px -60% 0px" },
+        );
+        links.forEach((a, id) => {
+          const el = document.getElementById(id);
+          if (el) observer.observe(el);
+        });
+      })();
+
+      // Click a plot to see it at full size, without leaving the page.
+      // The PNGs are 2250-3250 px wide and the matrix renders them at
+      // 280 px, so the axes and the legend are unreadable. Those
+      // thumbnails were ALREADY wrapped in <a target="_blank">: the
+      // capability existed, it just threw you into another tab in the
+      // middle of a demo. This intercepts that link and shows the plot
+      // in place, and still offers the raw file inside the viewer.
+      // Purely visual: reads no data, changes no payload, no route.
+      (function plotViewer() {
+        const box = document.createElement("div");
+        box.id = "plot-zoom";
+        box.dataset.open = "false";
+        box.setAttribute("role", "dialog");
+        box.setAttribute("aria-modal", "true");
+        box.setAttribute("aria-label", "Plot at full size");
+        box.innerHTML =
+          '<button type="button" class="zoom-close">Close</button>' +
+          '<figure><img alt=""><figcaption></figcaption></figure>';
+        document.body.appendChild(box);
+
+        const big = box.querySelector("img");
+        const cap = box.querySelector("figcaption");
+        const closeBtn = box.querySelector(".zoom-close");
+        let restoreFocus = null;
+
+        function show(src, label) {
+          big.src = src;
+          big.alt = label;
+          cap.innerHTML = "";
+          cap.appendChild(document.createTextNode(label));
+          const raw = document.createElement("a");
+          raw.href = src;
+          raw.target = "_blank";
+          raw.rel = "noopener";
+          raw.textContent = "Open the PNG";
+          cap.appendChild(raw);
+          restoreFocus = document.activeElement;
+          box.dataset.open = "true";
+          closeBtn.focus();
+        }
+
+        function hide() {
+          box.dataset.open = "false";
+          big.removeAttribute("src");
+          if (restoreFocus && restoreFocus.focus) restoreFocus.focus();
+          restoreFocus = null;
+        }
+
+        // Label from what the page already knows: the alt text the
+        // matrix writes ("UNSA Jan CCDF"), or the card's own heading.
+        function labelFor(img) {
+          const alt = (img.alt || "").trim();
+          const card = img.closest(".result-card");
+          const h = card && card.querySelector("h3");
+          if (h) {
+            const title = h.textContent.trim();
+            // le alt d'une carte est generique ("Coverage plot") : le
+            // titre de la carte dit QUELLE station on regarde, ce qui
+            // est la seule chose utile quand on l'agrandit en demo.
+            return alt && alt.toLowerCase() !== title.toLowerCase()
+              ? title + " — " + alt
+              : title;
+          }
+          return alt || "Plot";
+        }
+
+        document.addEventListener("click", function (e) {
+          const img = e.target.closest && e.target.closest("img");
+          if (!img || box.contains(img)) return;
+          if (
+            !img.closest(".result-card") &&
+            !img.closest("#step2-ccdf-grid-container")
+          )
+            return;
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault(); // sinon l'ancre existante ouvre AUSSI un onglet
+          show(img.currentSrc || img.src, labelFor(img));
+        });
+
+        box.addEventListener("click", function (e) {
+          if (e.target.tagName !== "A") hide();
+        });
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape" && box.dataset.open === "true") hide();
+        });
+      })();
+
+      function setStepState(gridId, state) {
+        const grid = document.getElementById(gridId);
+        const section = grid && grid.closest("section");
+        if (!section) return;
+        const badge = section.querySelector(".step-state");
+        section.dataset.state = state;
+        if (badge) {
+          badge.textContent =
+            { busy: "Running", done: "Done", error: "Failed" }[state] ||
+            "Not run";
+        }
+      }
+
+      function clearGrid(gridId) {
+        document.getElementById(gridId).innerHTML = "";
+      }
+
+      // Single source of truth for the Ndat criterion selected in "General
+      // Analysis Configuration" - reads the DOM only, no scientific logic.
+      // Used by every Steps 2-6 run function/comparator below; Step 1 never
+      // calls this, since completeness is independent of Ndat.
+      function getNdatMode() {
+        return document.getElementById("ndat-mode").value;
+      }
+
+      // One row per station - always shows that station's latest run, unlike
+      // the card grid which keeps every distinct parameter combination.
+      // Ties are shown in full, joined with "; " - a station can have
+      // more than one longest streak or more than one best/worst month
+      // (e.g. WHIT has two 5-day invalid streaks, DoY 9-13 and 54-58).
+      // The tie detection itself happens in Python
+      // (compute_completeness_summary in 1-completitud.py); this only
+      // formats the list it already receives.
+      function formatStreaks(streaks, length) {
+        const ranges = streaks
+          .map((s) => `${s.start_doy}-${s.end_doy}`)
+          .join("; ");
+        return `${length} (DoY ${ranges})`;
+      }
+
+      function formatMonths(months) {
+        return months
+          .map(
+            (m) =>
+              `${m.month} (${m.n_valid_days}/${m.n_days}, ${m.pct.toFixed(1)}%)`,
+          )
+          .join("; ");
+      }
+
+      function updateStep1Explanation(thCov) {
+        const minutes = Math.round(thCov * 1440);
+        const pct = (thCov * 100).toFixed(0);
+        document.getElementById("step1-explanation").innerHTML =
+          `<h4 style="margin-bottom:0.3rem">Purpose</h4>` +
+          `<p class="intro" style="margin-top:0">Step 1 evaluates the temporal availability of the GNSS data and identifies which days provide sufficient temporal coverage to be included in the subsequent ROTI L1 analyses. It measures data availability, not the scientific quality of the ROTI observations.</p>` +
+          `<h4 style="margin-bottom:0.3rem">How to read the summary</h4>` +
+          `<ul style="margin-top:0">` +
+          `<li><strong>Valid days</strong>: number of days whose temporal coverage is equal to or greater than the selected daily coverage threshold (${pct}%, ${minutes} of 1440 minutes).</li>` +
+          `<li><strong>Invalid days</strong>: number of days that do not meet the selected daily coverage threshold.</li>` +
+          `<li><strong>Valid-day rate [%]</strong>: proportion of analysed days classified as valid. This percentage is not itself compared against the daily coverage threshold.</li>` +
+          `<li><strong>Overall temporal coverage [%]</strong>: proportion of observed station-minutes relative to all possible minutes in the selected DoY interval, including invalid and zero-minute days. It is not a validity threshold.</li>` +
+          `<li><strong>Invalid days [0 min / partial]</strong>: 0 min = invalid days with no observed station minutes; partial = invalid days with some observations but below the selected daily threshold.</li>` +
+          `<li><strong>Longest invalid streak [days]</strong>: longest consecutive sequence of DoYs classified as invalid. If several maximum streaks are tied, all are shown.</li>` +
+          `<li><strong>Best month</strong>: month or tied months with the highest proportion of valid days among the analysed days of that month (valid days / analysed days and percentage, as shown in the table).</li>` +
+          `<li><strong>Worst month</strong>: month or tied months with the lowest proportion of valid days, using the same definition.</li>` +
+          `</ul>`;
+      }
+
+      function upsertSummaryRow(tbodyId, station, data) {
+        const tbody = document.getElementById(tbodyId);
+        let row = tbody.querySelector(`[data-station="${station}"]`);
+        if (!row) {
+          row = document.createElement("tr");
+          row.dataset.station = station;
+          tbody.appendChild(row);
+        }
+        const streak = formatStreaks(
+          data.longest_invalid_streaks,
+          data.longest_invalid_streak,
+        );
+        const invalidSplit = `${data.n_invalid_zero_min} / ${data.n_invalid_partial}`;
+        const best = formatMonths(data.best_months);
+        const worst = formatMonths(data.worst_months);
+        row.innerHTML =
+          `<td>${data.station}</td><td>${data.year}</td>` +
+          `<td>${data.n_valid_days}</td><td>${data.n_invalid_days}</td>` +
+          `<td>${data.coverage_pct}%</td>` +
+          `<td>${data.overall_coverage_pct}%</td>` +
+          `<td>${invalidSplit}</td><td>${streak}</td>` +
+          `<td>${best}</td><td>${worst}</td>`;
+      }
+
+      // Same find-or-create-by-station pattern as upsertSummaryRow(), kept
+      // outside the graph cards on purpose - a screenshot of "just the
+      // graphs" grid should never include a download link, so all of them
+      // live here instead, one line per station, updated in place on re-run.
+      // linksHtml is pre-built by the caller so this stays presentation-only
+      // (no per-step knowledge of how many CSVs a step produces).
+      function upsertDownloadLine(containerId, station, label, linksHtml) {
+        const container = document.getElementById(containerId);
+        let line = container.querySelector(`[data-station="${station}"]`);
+        if (!line) {
+          line = document.createElement("div");
+          line.dataset.station = station;
+          container.appendChild(line);
+        }
+        line.innerHTML = `${label}: ${linksHtml}`;
+      }
+
+      // Reusable for future steps: reuses the card for this exact cardKey if one
+      // already exists (same station+params run again replaces its own card),
+      // otherwise adds a new placeholder - never touches any other card in the
+      // grid, so two different parameter sets always stay side by side.
+      async function runStep(
+        endpoint,
+        payload,
+        gridId,
+        cardKey,
+        buildCardHtml,
+      ) {
+        const grid = document.getElementById(gridId);
+        let card = grid.querySelector(`[data-key="${cardKey}"]`);
+        if (!card) {
+          card = document.createElement("div");
+          card.dataset.key = cardKey;
+          grid.appendChild(card);
+        }
+        card.className = "result-card";
+        card.textContent = "Running...";
+        setStepState(gridId, "busy");
+
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            card.className = "result-card error";
+            card.textContent = "Error: " + (data.error || response.statusText);
+            setStepState(gridId, "error");
+            return;
+          }
+          card.className = "result-card";
+          card.innerHTML = buildCardHtml(data);
+          setStepState(gridId, "done");
+        } catch (err) {
+          card.className = "result-card error";
+          card.textContent = "Request failed: " + err;
+          setStepState(gridId, "error");
+        }
+      }
+
+      // Step 0 - the folder picker lives on the server on purpose: a browser
+      // file input never exposes a real absolute path, so the only way to let
+      // someone point at a folder is to have the server open the native
+      // dialog and hand the path back. Aborted here a little before the
+      // server's own 90 s timeout, so whichever fires first the button comes
+      // back to life with something written next to it - it never just sits
+      // dead with no explanation.
+      async function browseRawDir() {
+        const field = document.getElementById("step0-raw-dir");
+        const button = document.getElementById("step0-browse");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 85000);
+        button.disabled = true;
+        setFieldStatus(
+          "step0-status",
+          "Waiting for the folder dialog - it opens as a separate window.",
+          false,
+        );
+        try {
+          const response = await fetch("/api/browse-folder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ initial_dir: field.value }),
+            signal: controller.signal,
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setFieldStatus(
+              "step0-status",
+              data.error || response.statusText,
+              true,
+            );
+            return;
+          }
+          if (data.cancelled) {
+            setFieldStatus(
+              "step0-status",
+              "Cancelled - folder unchanged.",
+              false,
+            );
+            return;
+          }
+          field.value = data.path;
+          setFieldStatus("step0-status", "", false);
+        } catch (err) {
+          setFieldStatus(
+            "step0-status",
+            err.name === "AbortError"
+              ? "The folder dialog did not answer. Click Browse again, or type the path into the field."
+              : "Request failed: " + err,
+            true,
+          );
+        } finally {
+          clearTimeout(timer);
+          button.disabled = false;
+        }
+      }
+
+      // One row per station, rebuilt whole on every run: unlike Steps 1-6
+      // there is no per-station run here, so there is nothing to upsert -
+      // a run always returns the complete set of stations it just wrote.
+      // Columns are exactly the ones 0-toParquet.py puts in
+      // 0_station_summary_<year>.csv; longitude, latitude and the parquet
+      // path are in the CSV too, downloadable below, and would only make
+      // this table scroll sideways.
+      function buildStep0SummaryTable(rows) {
+        const body = document.getElementById("step0-summary-body");
+        body.innerHTML = rows
+          .map(
+            (r) =>
+              "<tr>" +
+              `<td>${r.station}</td>` +
+              `<td>${Number(r.n_rows).toLocaleString("en-US")}</td>` +
+              `<td>${r.first_doy}</td>` +
+              `<td>${r.last_doy}</td>` +
+              `<td>${r.n_doys_with_data}</td>` +
+              `<td>${r.utc_offset_hours}</td>` +
+              "</tr>",
+          )
+          .join("");
+      }
+
+      // Same runStep() as every other section - the long wait (a full year is
+      // over a minute) shows as the section state going to "Running", exactly
+      // like a short step. No Ndat here: getNdatMode() is for Steps 2-6, this
+      // one converts and filters nothing.
+      function runStep0() {
+        const payload = {
+          raw_dir: document.getElementById("step0-raw-dir").value.trim(),
+          year: parseInt(document.getElementById("step0-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step0-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step0-doy-end").value, 10),
+        };
+        const cardKey = [
+          payload.raw_dir,
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+        ].join("|");
+        setFieldStatus("step0-status", "", false);
+        runStep("/api/run/step0", payload, "step0-grid", cardKey, (data) => {
+          buildStep0SummaryTable(data.table);
+          upsertDownloadLine(
+            "step0-downloads",
+            String(data.year),
+            `${data.year} (${data.raw_dir})`,
+            `<a href="${data.station_summary_csv_url}" target="_blank">Station summary CSV</a> ` +
+              `<a href="${data.raw_inventory_csv_url}" target="_blank">RAW file inventory CSV</a>`,
+          );
+          const n = data.table.length;
+          const rows = data.table.reduce((sum, r) => sum + Number(r.n_rows), 0);
+          return (
+            `<h3>${n} station${n === 1 ? "" : "s"} converted (${data.year})</h3>` +
+            `<p>${rows.toLocaleString("en-US")} rows read from ` +
+            `<code>${data.raw_dir}</code>, DoY ${data.doy_start}-${data.doy_end}. ` +
+            `One Parquet file per station is now under ` +
+            `<code>results/&lt;station&gt;/${data.year}/0_parquet/</code> - ` +
+            `Steps 1-6 can run.</p>`
+          );
+        });
+      }
+
+      function runStep1() {
+        const payload = {
+          station: document.getElementById("step1-station").value,
+          year: parseInt(document.getElementById("step1-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step1-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step1-doy-end").value, 10),
+          th_cov: parseFloat(document.getElementById("step1-th-cov").value),
+        };
+        const cardKey = [
+          payload.station,
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+          payload.th_cov,
+        ].join("|");
+        runStep("/api/run/step1", payload, "step1-grid", cardKey, (data) => {
+          upsertSummaryRow("step1-summary-body", payload.station, data);
+          updateStep1Explanation(data.th_cov);
+          upsertDownloadLine(
+            "step1-downloads",
+            payload.station,
+            `${data.station} (${data.year})`,
+            `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
+          );
+          return (
+            `<h3>${data.station} (${data.year})</h3>` +
+            `<img src="${data.plot_url}?t=${Date.now()}" alt="Coverage plot">`
+          );
+        });
+      }
+
+      // Shared by the summary table row and the card text for Step 2. min/max
+      // here always come from months with enough valid days (see the note
+      // above the table) - which month, if any, got excluded is not repeated
+      // per cell, it is visible in that station's chart annotation instead.
+      function formatRange(data, col) {
+        const minV = data[col + "_min_value"].toFixed(2);
+        const maxV = data[col + "_max_value"].toFixed(2);
+        return (
+          `${minV} (${data[col + "_min_month"]}, n_days=${data[col + "_min_n_days"]}) ` +
+          `– ${maxV} (${data[col + "_max_month"]}, n_days=${data[col + "_max_n_days"]})`
+        );
+      }
+
+      function upsertCcdfSummaryRow(tbodyId, station, data) {
+        const tbody = document.getElementById(tbodyId);
+        let row = tbody.querySelector(`[data-station="${station}"]`);
+        if (!row) {
+          row = document.createElement("tr");
+          row.dataset.station = station;
+          tbody.appendChild(row);
+        }
+        row.innerHTML =
+          `<td>${data.station}</td><td>${data.year}</td>` +
+          `<td>${formatRange(data, "p90")}</td><td>${data.p90_range.toFixed(2)}</td>` +
+          `<td>${formatRange(data, "p99")}</td><td>${data.p99_range.toFixed(2)}</td>`;
+      }
+
+      function updateStep2Explanation(minValidDays) {
+        document.getElementById("step2-explanation").innerHTML =
+          `<h4 style="margin-bottom:0.3rem">How to read the summary</h4>` +
+          `<ul style="margin-top:0">` +
+          `<li><strong>p90 summary</strong>: minimum and maximum monthly p90 values among months with sufficient statistical support, including the corresponding month and number of valid days.</li>` +
+          `<li><strong>p90 range [TECU/min]</strong>: difference between the reliable monthly p90 maximum and minimum.</li>` +
+          `<li><strong>p99 summary</strong>: equivalent minimum and maximum for monthly p99.</li>` +
+          `<li><strong>p99 range [TECU/min]</strong>: difference between the reliable monthly p99 maximum and minimum.</li>` +
+          `<li><strong>Statistical support</strong>: months with n_days &lt; ${minValidDays} remain in the CSV and plots but are excluded from the extrema/range summary.</li>` +
+          `<li><strong>n_days</strong>: number of valid DoYs contributing ROTI L1 observations to that month.</li>` +
+          `</ul>`;
+      }
+
+      function runStep2() {
+        const payload = {
+          station: document.getElementById("step2-station").value,
+          year: parseInt(document.getElementById("step2-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step2-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step2-doy-end").value, 10),
+          th_cov: parseFloat(document.getElementById("step2-th-cov").value),
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          payload.station,
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+          payload.th_cov,
+        ].join("|");
+        runStep("/api/run/step2", payload, "step2-grid", cardKey, (data) => {
+          upsertCcdfSummaryRow("step2-summary-body", payload.station, data);
+          updateStep2Explanation(data.min_valid_days_per_month);
+          upsertDownloadLine(
+            "step2-downloads",
+            payload.station,
+            `${data.station} (${data.year})`,
+            `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
+          );
+          return (
+            `<h3>${data.station} (${data.year})</h3>` +
+            `<img src="${data.plot_url}?t=${Date.now()}" alt="Monthly percentile variability">`
+          );
+        });
+      }
+
+      const MONTH_ABBR = [
+        "",
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+
+      function buildCcdfComparisonTable(data) {
+        const stations = data.available_stations;
+        let header = "<tr><th>Month</th>";
+        for (const st of stations) {
+          header += `<th>${st} p90</th><th>${st} p99</th><th>${st} n_days</th>`;
+        }
+        header += "</tr>";
+
+        let rows = "";
+        for (const row of data.table) {
+          let cells = `<td>${MONTH_ABBR[row.month]}</td>`;
+          for (const st of stations) {
+            const p90 = row["p90_" + st];
+            const p99 = row["p99_" + st];
+            const nDays = row["n_days_" + st];
+            const low =
+              nDays !== null && nDays < data.min_valid_days_per_month
+                ? " *"
+                : "";
+            cells += `<td>${p90 !== null ? p90.toFixed(2) : "-"}</td>`;
+            cells += `<td>${p99 !== null ? p99.toFixed(2) : "-"}</td>`;
+            cells += `<td>${nDays !== null ? nDays : "-"}${low}</td>`;
+          }
+          rows += `<tr>${cells}</tr>`;
+        }
+
+        return (
+          `<div style="overflow-x:auto"><table class="summary" style="font-size:0.75rem">` +
+          `<thead>${header}</thead><tbody>${rows}</tbody></table></div>`
+        );
+      }
+
+      function runStep2_2() {
+        const payload = {
+          year: parseInt(document.getElementById("step2-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step2-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step2-doy-end").value, 10),
+          th_cov: parseFloat(document.getElementById("step2-th-cov").value),
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+          payload.th_cov,
+        ].join("|");
+        runStep("/api/run/step2.2", payload, "step22-grid", cardKey, (data) => {
+          let notes = "";
+          const missing = Object.keys(data.missing_stations);
+          if (missing.length) {
+            notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+          }
+          const thWarn = Object.keys(data.th_cov_warnings);
+          if (thWarn.length) {
+            notes += `<p style="color:#900">th_cov warning: ${thWarn.join(", ")}</p>`;
+          }
+          return (
+            `<h3>Cross-station comparison (${data.year})</h3>` +
+            `<p>Stations included: ${data.available_stations.join(", ")}. ` +
+            `<code>*</code> marks months with fewer than ${data.min_valid_days_per_month} valid days.</p>` +
+            notes +
+            buildCcdfComparisonTable(data) +
+            `<img src="${data.plot_url}?t=${Date.now()}" alt="Monthly percentile comparison">` +
+            `<div class="card-actions"><a href="${data.csv_url}" target="_blank">Download CSV</a></div>`
+          );
+        });
+      }
+
+      function setMonthCheckboxes(containerId, checked) {
+        document
+          .querySelectorAll(`#${containerId} input[type=checkbox]`)
+          .forEach((cb) => (cb.checked = checked));
+      }
+
+      function setFieldStatus(elementId, message, isError) {
+        const el = document.getElementById(elementId);
+        el.textContent = message || "";
+        el.className = "field-status" + (isError ? " error" : "");
+      }
+
+      document
+        .getElementById("step2-ccdf-months")
+        .addEventListener("change", () =>
+          setFieldStatus("step2-ccdf-compare-status", "", false),
+        );
+
+      // Single station (synced dropdown), any number of months, one color per
+      // month - errors go in the status line next to the button, never as a
+      // permanent card in the results grid.
+      function runStep2CcdfCompare() {
+        const station = document.getElementById("step2-ccdf-station").value;
+        const year = parseInt(document.getElementById("step2-year").value, 10);
+        const doy_start = parseInt(
+          document.getElementById("step2-doy-start").value,
+          10,
+        );
+        const doy_end = parseInt(
+          document.getElementById("step2-doy-end").value,
+          10,
+        );
+        const th_cov = parseFloat(
+          document.getElementById("step2-th-cov").value,
+        );
+        const months = Array.from(
+          document.querySelectorAll("#step2-ccdf-months input:checked"),
+        ).map((cb) => parseInt(cb.value, 10));
+
+        if (months.length === 0) {
+          setFieldStatus(
+            "step2-ccdf-compare-status",
+            "Select at least one month first.",
+            true,
+          );
+          return;
+        }
+        setFieldStatus("step2-ccdf-compare-status", "", false);
+
+        const payload = {
+          station,
+          year,
+          doy_start,
+          doy_end,
+          th_cov,
+          months,
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          station,
+          year,
+          doy_start,
+          doy_end,
+          th_cov,
+          months.join(","),
+        ].join("|");
+        runStep(
+          "/api/run/step2/ccdf-compare",
+          payload,
+          "step2-ccdf-compare-grid",
+          cardKey,
+          (data) => {
+            const monthsLabel = data.months
+              .map((m) => MONTH_ABBR[m])
+              .join(", ");
+            let notes = "";
+            if (data.low_support_months.length) {
+              const lowLabel = data.low_support_months
+                .map((m) => MONTH_ABBR[m])
+                .join(", ");
+              notes = `<p style="color:#900">Low support (n_days &lt; ${data.min_valid_days_per_month}): ${lowLabel}</p>`;
+            }
+            return (
+              `<h3>${data.station} (${data.year}) - ${monthsLabel}</h3>` +
+              notes +
+              `<img src="${data.plot_url}?t=${Date.now()}" alt="Monthly CCDF comparison">`
+            );
+          },
+        );
+      }
+
+      // Several stations (checkboxes), exactly one month (plain <select>, so the
+      // one-month constraint is guaranteed by construction - no JS enforcement
+      // needed) - color fixed per station.
+      function runStep2CrossStationCcdf() {
+        const year = parseInt(document.getElementById("step2-year").value, 10);
+        const doy_start = parseInt(
+          document.getElementById("step2-doy-start").value,
+          10,
+        );
+        const doy_end = parseInt(
+          document.getElementById("step2-doy-end").value,
+          10,
+        );
+        const th_cov = parseFloat(
+          document.getElementById("step2-th-cov").value,
+        );
+        const stations = Array.from(
+          document.querySelectorAll(
+            "#step2-cross-station-stations input:checked",
+          ),
+        ).map((cb) => cb.value);
+        const month = parseInt(
+          document.getElementById("step2-cross-station-month").value,
+          10,
+        );
+
+        if (stations.length === 0) {
+          setFieldStatus(
+            "step2-cross-station-status",
+            "Select at least one station first.",
+            true,
+          );
+          return;
+        }
+        setFieldStatus("step2-cross-station-status", "", false);
+
+        const payload = {
+          stations,
+          months: [month],
+          year,
+          doy_start,
+          doy_end,
+          th_cov,
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          stations.join(","),
+          year,
+          doy_start,
+          doy_end,
+          th_cov,
+          month,
+        ].join("|");
+        runStep(
+          "/api/run/step2/cross-station-ccdf",
+          payload,
+          "step2-cross-station-grid",
+          cardKey,
+          (data) => {
+            let notes = "";
+            const missing = Object.keys(data.missing_stations);
+            if (missing.length) {
+              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+            }
+            // Low support is per station here, not per month - the same month can
+            // be fine for one station and low-support for another, so this must
+            // name the affected station(s) explicitly rather than flag the month
+            // as a whole (e.g. "UNSA: Aug", never a bare "Aug" that would wrongly
+            // suggest all stations are affected).
+            const lowEntries = Object.entries(data.low_support).filter(
+              ([, months]) => months.length,
+            );
+            if (lowEntries.length) {
+              const lowLabel = lowEntries
+                .map(
+                  ([st, months]) =>
+                    `${st}: ${months.map((m) => MONTH_ABBR[m]).join(", ")}`,
+                )
+                .join("; ");
+              notes += `<p style="color:#900">Low support (n_days &lt; ${data.min_valid_days_per_month}): ${lowLabel}</p>`;
+            }
+            const monthsLabel = data.months
+              .map((m) => MONTH_ABBR[m])
+              .join(", ");
+            return (
+              `<h3>${data.stations_used.join(", ")} (${data.year}) - ${monthsLabel}</h3>` +
+              notes +
+              `<img src="${data.plot_url}?t=${Date.now()}" alt="Cross-station CCDF comparison">`
+            );
+          },
+        );
+      }
+
+      // Keep the Station field at the top of Step 2 and the one repeated in the
+      // within-station CCDF subsection in sync, in both directions - two access
+      // points, one value, so changing either one always reflects everywhere
+      // without scrolling back up.
+      function syncSelects(idA, idB) {
+        const a = document.getElementById(idA);
+        const b = document.getElementById(idB);
+        a.addEventListener("change", () => {
+          b.value = a.value;
+        });
+        b.addEventListener("change", () => {
+          a.value = b.value;
+        });
+      }
+      syncSelects("step2-station", "step2-ccdf-station");
+
+      let step2CcdfGridLoaded = false;
+
+      document
+        .getElementById("step2-ccdf-grid-details")
+        .addEventListener("toggle", function () {
+          if (this.open && !step2CcdfGridLoaded) {
+            step2CcdfGridLoaded = true;
+            loadStep2CcdfGrid();
+          }
+        });
+
+      async function loadStep2CcdfGrid() {
+        const container = document.getElementById("step2-ccdf-grid-container");
+        const year = parseInt(document.getElementById("step2-year").value, 10);
+        const doy_start = parseInt(
+          document.getElementById("step2-doy-start").value,
+          10,
+        );
+        const doy_end = parseInt(
+          document.getElementById("step2-doy-end").value,
+          10,
+        );
+        const th_cov = parseFloat(
+          document.getElementById("step2-th-cov").value,
+        );
+
+        container.textContent = "Loading...";
+        try {
+          const response = await fetch("/api/run/step2/ccdf-grid", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              year,
+              doy_start,
+              doy_end,
+              th_cov,
+              ndat_mode: getNdatMode(),
+            }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            container.textContent =
+              "Error: " + (data.error || response.statusText);
+            return;
+          }
+          container.innerHTML = buildStep2CcdfGridTable(data.grid);
+        } catch (err) {
+          container.textContent = "Error: " + err;
+        }
+      }
+
+      function buildStep2CcdfGridTable(grid) {
+        const stations = ["UNSA", "KOUG", "WHIT", "YELL"];
+        let header =
+          "<tr><th>Month</th>" +
+          stations.map((st) => `<th data-station="${st}">${st}</th>`).join("") +
+          "</tr>";
+        let rows = "";
+        for (let m = 1; m <= 12; m++) {
+          let cells = `<td>${MONTH_ABBR[m]}</td>`;
+          for (const st of stations) {
+            const url = grid[st] ? grid[st][m] : null;
+            cells += url
+              ? `<td data-station="${st}"><a href="${url}" target="_blank"><img src="${url}?t=${Date.now()}" alt="${st} ${MONTH_ABBR[m]} CCDF"></a></td>`
+              : `<td data-station="${st}" class="missing">&mdash;</td>`;
+          }
+          rows += `<tr>${cells}</tr>`;
+        }
+        return (
+          `<div style="overflow-x:auto"><table class="summary ccdf-grid">` +
+          `<thead>${header}</thead><tbody>${rows}</tbody></table></div>`
+        );
+      }
+
+      document
+        .querySelectorAll(
+          "#step2-ccdf-grid-station-filter input[data-station-filter]",
+        )
+        .forEach((cb) => {
+          cb.addEventListener("change", function () {
+            const visible = this.checked ? "" : "none";
+            document
+              .querySelectorAll(
+                `#step2-ccdf-grid-container [data-station="${this.dataset.stationFilter}"]`,
+              )
+              .forEach((cell) => (cell.style.display = visible));
+          });
+        });
+
+      function upsertStep3SummaryRow(tbodyId, station, data) {
+        const tbody = document.getElementById(tbodyId);
+        let row = tbody.querySelector(`[data-station="${station}"]`);
+        if (!row) {
+          row = document.createElement("tr");
+          row.dataset.station = station;
+          tbody.appendChild(row);
+        }
+        row.innerHTML =
+          `<td>${data.station}</td><td>${data.year}</td><td>${data.n_values.toLocaleString()}</td>` +
+          `<td>${data.p90_annual.toFixed(2)}</td><td>${data.p99_annual.toFixed(2)}</td>` +
+          `<td>${data.frequency_p90_pct.toFixed(2)}</td><td>${data.frequency_p99_pct.toFixed(2)}</td>`;
+      }
+
+      function runStep3() {
+        const payload = {
+          station: document.getElementById("step3-station").value,
+          year: parseInt(document.getElementById("step3-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step3-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step3-doy-end").value, 10),
+          th_cov: parseFloat(document.getElementById("step3-th-cov").value),
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          payload.station,
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+          payload.th_cov,
+        ].join("|");
+        runStep("/api/run/step3", payload, "step3-grid", cardKey, (data) => {
+          upsertStep3SummaryRow("step3-summary-body", data.station, data);
+          upsertDownloadLine(
+            "step3-downloads",
+            data.station,
+            `${data.station} (${data.year})`,
+            `<a href="${data.thresholds_csv_url}" target="_blank">Download thresholds CSV</a>` +
+              `<a href="${data.daily_csv_url}" target="_blank">Download daily CSV</a>`,
+          );
+          return (
+            `<h3>${data.station} (${data.year})</h3>` +
+            `<img src="${data.plot_url}?t=${Date.now()}" alt="Daily frequency of threshold exceedance">`
+          );
+        });
+      }
+
+      function buildStep3SummaryTable(table) {
+        const header =
+          "<tr><th>Station</th><th>n_values</th>" +
+          "<th>p90 annual [TECU/min]</th><th>p99 annual [TECU/min]</th>" +
+          "<th>Max p90 freq day</th><th>Max p90 freq [%]</th><th>Max p90 day support</th>" +
+          "<th>Max p99 freq day</th><th>Max p99 freq [%]</th><th>Max p99 day support</th></tr>";
+        const support = (n_values, coverage) =>
+          `${n_values.toLocaleString()} (${(coverage * 100).toFixed(1)}% cov)`;
+        const rows = table
+          .map(
+            (row) =>
+              `<tr><td>${row.station}</td><td>${row.n_values.toLocaleString()}</td>` +
+              `<td>${row.p90_annual.toFixed(2)}</td><td>${row.p99_annual.toFixed(2)}</td>` +
+              `<td>${row.max_p90_freq_date} (DoY ${row.max_p90_freq_doy})</td><td>${row.max_p90_freq_pct.toFixed(2)}</td>` +
+              `<td>${support(row.max_p90_freq_n_values, row.max_p90_freq_coverage)}</td>` +
+              `<td>${row.max_p99_freq_date} (DoY ${row.max_p99_freq_doy})</td><td>${row.max_p99_freq_pct.toFixed(2)}</td>` +
+              `<td>${support(row.max_p99_freq_n_values, row.max_p99_freq_coverage)}</td></tr>`,
+          )
+          .join("");
+        return (
+          `<div style="overflow-x:auto"><table class="summary" style="font-size:0.75rem">` +
+          `<thead>${header}</thead><tbody>${rows}</tbody></table></div>`
+        );
+      }
+
+      function buildStep3CoincidencesTable(coincidences, topN) {
+        if (coincidences.length === 0) {
+          return `<p>No coincidences found among the top-N days.</p>`;
+        }
+        const rows = coincidences
+          .map(
+            (row) =>
+              `<tr><td>${row.date}</td><td>${row.n_stations}</td><td>${row.stations}</td>` +
+              `<td>${row.frequency_p99_pct_by_station}</td><td>${row.rank_by_station}</td></tr>`,
+          )
+          .join("");
+        return (
+          `<table class="summary" style="font-size:0.85rem">` +
+          `<thead><tr><th>Date</th><th># stations</th><th>Stations</th>` +
+          `<th>p99 exceedance frequency [%]</th><th>Top-${topN} rank</th></tr></thead>` +
+          `<tbody>${rows}</tbody></table>`
+        );
+      }
+
+      function buildStep3TopDaysTable(topDays) {
+        const rows = topDays
+          .map(
+            (row) =>
+              `<tr><td>${row.rank}</td><td>${row.station}</td><td>${row.date}</td><td>${row.doy}</td>` +
+              `<td>${row.frequency_p99_pct.toFixed(2)}</td><td>${row.frequency_p90_pct.toFixed(2)}</td>` +
+              `<td>${row.n_values.toLocaleString()}</td><td>${(row.coverage * 100).toFixed(1)}%</td></tr>`,
+          )
+          .join("");
+        return (
+          `<div style="overflow-x:auto"><table class="summary" style="font-size:0.8rem">` +
+          `<thead><tr><th>Rank</th><th>Station</th><th>Date</th><th>DoY</th>` +
+          `<th>p99 freq [%]</th><th>p90 freq [%]</th><th>n_values</th><th>Coverage</th></tr></thead>` +
+          `<tbody>${rows}</tbody></table></div>`
+        );
+      }
+
+      function runStep3Comparison() {
+        const year = parseInt(document.getElementById("step3-year").value, 10);
+        const doy_start = parseInt(
+          document.getElementById("step3-doy-start").value,
+          10,
+        );
+        const doy_end = parseInt(
+          document.getElementById("step3-doy-end").value,
+          10,
+        );
+        const top_n = parseInt(
+          document.getElementById("step3-top-n").value,
+          10,
+        );
+
+        const payload = {
+          year,
+          doy_start,
+          doy_end,
+          top_n,
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [year, doy_start, doy_end, top_n].join("|");
+        runStep(
+          "/api/run/step3/comparison",
+          payload,
+          "step3-comparison-grid",
+          cardKey,
+          (data) => {
+            let notes = "";
+            const missing = Object.keys(data.missing_stations);
+            if (missing.length) {
+              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+            }
+            return (
+              `<h3>Cross-station daily comparison (${data.year})</h3>` +
+              `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
+              notes +
+              buildStep3SummaryTable(data.table) +
+              `<h4 style="margin-bottom:0.3rem">Coincidences (date in top-${data.top_n} of 2+ stations)</h4>` +
+              `<p class="intro" style="margin:0 0 0.5rem;font-size:0.8rem">Coincidences are based only on ` +
+              `the Top-${data.top_n} daily p99 exceedance frequency ranking - independent of the ` +
+              `maximum-p90-day column in the table above. A date can appear in one, both, or neither.</p>` +
+              buildStep3CoincidencesTable(data.coincidences, data.top_n) +
+              `<details style="margin-top:0.75rem">` +
+              `<summary class="subsection-title" style="font-size:0.95rem">Top daily p99 candidates</summary>` +
+              buildStep3TopDaysTable(data.top_days) +
+              `</details>` +
+              `<img src="${data.plot_url}?t=${Date.now()}" alt="Daily p99 frequency comparison">` +
+              `<div class="card-actions">` +
+              `<a href="${data.table_csv_url}" target="_blank">Download annual summary CSV</a>` +
+              `<a href="${data.top_days_csv_url}" target="_blank">Download top-${data.top_n} days CSV</a>` +
+              `<a href="${data.coincidences_csv_url}" target="_blank">Download coincidences CSV</a>` +
+              `</div>`
+            );
+          },
+        );
+      }
+
+      function upsertStep4SummaryRow(tbodyId, station, data) {
+        const tbody = document.getElementById(tbodyId);
+        let row = tbody.querySelector(`[data-station="${station}"]`);
+        if (!row) {
+          row = document.createElement("tr");
+          row.dataset.station = station;
+          tbody.appendChild(row);
+        }
+        const support = (n) => n.toLocaleString();
+        row.innerHTML =
+          `<td>${data.station}</td><td>${data.year}</td>` +
+          `<td>${data.max_p90_hours.join(", ")}</td><td>${data.max_p90_freq_pct.toFixed(2)}</td>` +
+          `<td>${support(data.max_p90_n_values)}</td>` +
+          `<td>${data.max_p99_hours.join(", ")}</td><td>${data.max_p99_freq_pct.toFixed(2)}</td>` +
+          `<td>${support(data.max_p99_n_values)}</td>`;
+      }
+
+      function runStep4() {
+        const payload = {
+          station: document.getElementById("step4-station").value,
+          year: parseInt(document.getElementById("step4-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step4-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step4-doy-end").value, 10),
+          th_cov: parseFloat(document.getElementById("step4-th-cov").value),
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          payload.station,
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+          payload.th_cov,
+        ].join("|");
+        runStep("/api/run/step4", payload, "step4-grid", cardKey, (data) => {
+          upsertStep4SummaryRow("step4-summary-body", data.station, data);
+          upsertDownloadLine(
+            "step4-downloads",
+            data.station,
+            `${data.station} (${data.year})`,
+            `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
+          );
+          return (
+            `<h3>${data.station} (${data.year})</h3>` +
+            `<img src="${data.plot_url}?t=${Date.now()}" alt="Hourly frequency of threshold exceedance">`
+          );
+        });
+      }
+
+      function buildStep4ComparisonTable(table) {
+        const header =
+          "<tr><th>Station</th>" +
+          "<th>Max p90 hour(s)</th><th>Max p90 freq [%]</th><th>Support</th>" +
+          "<th>Max p99 hour(s)</th><th>Max p99 freq [%]</th><th>Support</th></tr>";
+        const rows = table
+          .map(
+            (row) =>
+              `<tr><td>${row.station}</td>` +
+              `<td>${row.max_p90_hours}</td><td>${row.max_p90_freq_pct.toFixed(2)}</td><td>${row.max_p90_n_values.toLocaleString()}</td>` +
+              `<td>${row.max_p99_hours}</td><td>${row.max_p99_freq_pct.toFixed(2)}</td><td>${row.max_p99_n_values.toLocaleString()}</td></tr>`,
+          )
+          .join("");
+        return (
+          `<table class="summary" style="font-size:0.85rem">` +
+          `<thead>${header}</thead><tbody>${rows}</tbody></table>`
+        );
+      }
+
+      // Station list, year and DoY range all come from 4.2's own config / the
+      // request params - no separate form fields, same convention as Step 3's
+      // comparison subsection (reuses the Step 3 Year/DoY fields above it).
+      function runStep4Comparison() {
+        const year = parseInt(document.getElementById("step4-year").value, 10);
+        const doy_start = parseInt(
+          document.getElementById("step4-doy-start").value,
+          10,
+        );
+        const doy_end = parseInt(
+          document.getElementById("step4-doy-end").value,
+          10,
+        );
+
+        const payload = { year, doy_start, doy_end, ndat_mode: getNdatMode() };
+        const cardKey = [year, doy_start, doy_end].join("|");
+        runStep(
+          "/api/run/step4/comparison",
+          payload,
+          "step4-comparison-grid",
+          cardKey,
+          (data) => {
+            let notes = "";
+            const missing = Object.keys(data.missing_stations);
+            if (missing.length) {
+              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+            }
+            return (
+              `<h3>Cross-station hourly comparison (${data.year})</h3>` +
+              `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
+              notes +
+              buildStep4ComparisonTable(data.table) +
+              `<h4 style="margin-bottom:0.3rem">Cross-station hourly p90 comparison</h4>` +
+              `<img src="${data.p90_plot_url}?t=${Date.now()}" alt="Cross-station hourly p90 comparison">` +
+              `<h4 style="margin-bottom:0.3rem">Cross-station hourly p99 comparison</h4>` +
+              `<img src="${data.p99_plot_url}?t=${Date.now()}" alt="Cross-station hourly p99 comparison">` +
+              `<div class="card-actions"><a href="${data.table_csv_url}" target="_blank">Download hourly summary CSV</a></div>`
+            );
+          },
+        );
+      }
+
+      function upsertStep5SummaryRow(tbodyId, station, data) {
+        const tbody = document.getElementById(tbodyId);
+        let row = tbody.querySelector(`[data-station="${station}"]`);
+        if (!row) {
+          row = document.createElement("tr");
+          row.dataset.station = station;
+          tbody.appendChild(row);
+        }
+        row.innerHTML =
+          `<td>${data.station}</td><td>${data.year}</td>` +
+          `<td>${data.max_p90_dayparts.join(", ")}</td><td>${data.max_p90_freq_pct.toFixed(2)}</td>` +
+          `<td>${data.max_p90_n_values.toLocaleString()}</td>` +
+          `<td>${data.max_p99_dayparts.join(", ")}</td><td>${data.max_p99_freq_pct.toFixed(2)}</td>` +
+          `<td>${data.max_p99_n_values.toLocaleString()}</td>`;
+      }
+
+      function runStep5() {
+        const payload = {
+          station: document.getElementById("step5-station").value,
+          year: parseInt(document.getElementById("step5-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step5-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step5-doy-end").value, 10),
+          th_cov: parseFloat(document.getElementById("step5-th-cov").value),
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          payload.station,
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+          payload.th_cov,
+        ].join("|");
+        runStep("/api/run/step5", payload, "step5-grid", cardKey, (data) => {
+          upsertStep5SummaryRow("step5-summary-body", data.station, data);
+          upsertDownloadLine(
+            "step5-downloads",
+            data.station,
+            `${data.station} (${data.year})`,
+            `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
+          );
+          return (
+            `<h3>${data.station} (${data.year})</h3>` +
+            `<img src="${data.plot_url}?t=${Date.now()}" alt="Daypart frequency of threshold exceedance">`
+          );
+        });
+      }
+
+      // Wide table: one row per daypart, one column group per station - same
+      // shape as buildCcdfComparisonTable (Step 2.2), unlike Step 4.2's table
+      // which is one row per station (Step 4 has 24 hours, too many for
+      // columns; Step 5 has only 4 dayparts, so daypart-as-row/station-as-
+      // column reads better here, same reasoning that shaped 2.2's table).
+      function buildStep5ComparisonTable(data) {
+        const stations = data.available_stations;
+        let header = "<tr><th>Daypart</th><th>Hour range</th>";
+        for (const st of stations) {
+          header += `<th>${st} n_values</th><th>${st} p90 [%]</th><th>${st} p99 [%]</th>`;
+        }
+        header += "</tr>";
+
+        let rows = "";
+        for (const row of data.table) {
+          let cells = `<td>${row.daypart}</td><td>${row.hour_range}</td>`;
+          for (const st of stations) {
+            const n = row["n_values_" + st];
+            const p90 = row["freq_p90_" + st];
+            const p99 = row["freq_p99_" + st];
+            cells += `<td>${n !== null && n !== undefined ? n.toLocaleString() : "-"}</td>`;
+            cells += `<td>${p90 !== null && p90 !== undefined ? p90.toFixed(2) : "-"}</td>`;
+            cells += `<td>${p99 !== null && p99 !== undefined ? p99.toFixed(2) : "-"}</td>`;
+          }
+          rows += `<tr>${cells}</tr>`;
+        }
+
+        return (
+          `<div style="overflow-x:auto"><table class="summary" style="font-size:0.75rem">` +
+          `<thead>${header}</thead><tbody>${rows}</tbody></table></div>`
+        );
+      }
+
+      function runStep5Comparison() {
+        const year = parseInt(document.getElementById("step5-year").value, 10);
+        const doy_start = parseInt(
+          document.getElementById("step5-doy-start").value,
+          10,
+        );
+        const doy_end = parseInt(
+          document.getElementById("step5-doy-end").value,
+          10,
+        );
+        const th_cov = parseFloat(
+          document.getElementById("step5-th-cov").value,
+        );
+
+        const payload = {
+          year,
+          doy_start,
+          doy_end,
+          th_cov,
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [year, doy_start, doy_end, th_cov].join("|");
+        runStep(
+          "/api/run/step5/comparison",
+          payload,
+          "step5-comparison-grid",
+          cardKey,
+          (data) => {
+            let notes = "";
+            const missing = Object.keys(data.missing_stations);
+            if (missing.length) {
+              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+            }
+            const thWarn = Object.keys(data.th_cov_warnings);
+            if (thWarn.length) {
+              notes += `<p style="color:#900">th_cov warning: ${thWarn.map((s) => `${s} (${data.th_cov_warnings[s]})`).join("; ")}</p>`;
+            }
+            return (
+              `<h3>Cross-station daypart comparison (${data.year})</h3>` +
+              `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
+              notes +
+              buildStep5ComparisonTable(data) +
+              `<img src="${data.plot_url}?t=${Date.now()}" alt="Daypart comparison">` +
+              `<div class="card-actions"><a href="${data.table_csv_url}" target="_blank">Download comparison CSV</a></div>`
+            );
+          },
+        );
+      }
+
+      // month_local is 1-12, same indexing MONTH_ABBR already uses
+      // elsewhere on this page.
+      function buildStep6TopTable(topRows) {
+        const header =
+          "<tr><th>Rank</th><th>Month</th><th>Hour</th><th>n_days</th><th>n_values</th>" +
+          "<th>p90 freq [%]</th><th>p99 freq [%]</th></tr>";
+        const rows = topRows
+          .map(
+            (row) =>
+              `<tr><td>${row.rank}</td><td>${MONTH_ABBR[row.month_local]}</td>` +
+              `<td>${String(row.hour_local).padStart(2, "0")}h</td>` +
+              `<td>${row.n_days}</td><td>${row.n_values.toLocaleString()}</td>` +
+              `<td>${row.frequency_p90_pct.toFixed(2)}</td><td>${row.frequency_p99_pct.toFixed(2)}</td></tr>`,
+          )
+          .join("");
+        return (
+          `<table class="summary" style="font-size:0.8rem">` +
+          `<thead>${header}</thead><tbody>${rows}</tbody></table>`
+        );
+      }
+
+      function runStep6() {
+        const payload = {
+          station: document.getElementById("step6-station").value,
+          year: parseInt(document.getElementById("step6-year").value, 10),
+          doy_start: parseInt(
+            document.getElementById("step6-doy-start").value,
+            10,
+          ),
+          doy_end: parseInt(document.getElementById("step6-doy-end").value, 10),
+          th_cov: parseFloat(document.getElementById("step6-th-cov").value),
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [
+          payload.station,
+          payload.year,
+          payload.doy_start,
+          payload.doy_end,
+          payload.th_cov,
+        ].join("|");
+        runStep("/api/run/step6", payload, "step6-grid", cardKey, (data) => {
+          upsertDownloadLine(
+            "step6-downloads",
+            data.station,
+            `${data.station} (${data.year})`,
+            `<a href="${data.csv_url}" target="_blank">Download month-hour CSV (12x24)</a>` +
+              `<a href="${data.top_p90_csv_url}" target="_blank">Download Top-10 p90 CSV</a>` +
+              `<a href="${data.top_p99_csv_url}" target="_blank">Download Top-10 p99 CSV</a>`,
+          );
+          return (
+            `<h3>${data.station} (${data.year})</h3>` +
+            `<img src="${data.plot_p90_url}?t=${Date.now()}" alt="Month-hour p90 heatmap">` +
+            `<img src="${data.plot_p99_url}?t=${Date.now()}" alt="Month-hour p99 heatmap">` +
+            `<img src="${data.plot_nvalues_url}?t=${Date.now()}" alt="Month-hour observation support heatmap">` +
+            `<h4 style="margin-bottom:0.3rem">Top 10 cells - p90</h4>` +
+            buildStep6TopTable(data.top_p90) +
+            `<h4 style="margin-bottom:0.3rem">Top 10 cells - p99</h4>` +
+            buildStep6TopTable(data.top_p99)
+          );
+        });
+      }
+
+      // Station column, "Max pXX month-hour" and freq/support columns per
+      // percentile - month_local/hour_local arrive as plain integers from
+      // the backend (no recomputation here, only MONTH_ABBR lookup and
+      // toFixed/toLocaleString formatting, same as every other table on
+      // this page).
+      function buildStep6MaximaTable(data) {
+        const header =
+          "<tr><th>Station</th>" +
+          "<th>Max p90 month-hour</th><th>p90 freq [%]</th><th>n_days</th><th>n_values</th>" +
+          "<th>Max p99 month-hour</th><th>p99 freq [%]</th><th>n_days</th><th>n_values</th></tr>";
+        const rows = data.table
+          .map((row) => {
+            const p90Cell = `${MONTH_ABBR[row.max_p90_month_local]} ${String(row.max_p90_hour_local).padStart(2, "0")}h`;
+            const p99Cell = `${MONTH_ABBR[row.max_p99_month_local]} ${String(row.max_p99_hour_local).padStart(2, "0")}h`;
+            return (
+              `<tr><td>${row.station}</td>` +
+              `<td>${p90Cell}</td><td>${row.max_p90_freq_pct.toFixed(2)}</td>` +
+              `<td>${row.max_p90_n_days}</td><td>${row.max_p90_n_values.toLocaleString()}</td>` +
+              `<td>${p99Cell}</td><td>${row.max_p99_freq_pct.toFixed(2)}</td>` +
+              `<td>${row.max_p99_n_days}</td><td>${row.max_p99_n_values.toLocaleString()}</td></tr>`
+            );
+          })
+          .join("");
+        return (
+          `<table class="summary" style="font-size:0.85rem">` +
+          `<thead>${header}</thead><tbody>${rows}</tbody></table>`
+        );
+      }
+
+      // Station list, year and DoY/th_cov all come from Step 6's own config
+      // fields above - no separate form fields, same convention as Step 5's
+      // comparison subsection (reuses the Step 5 Year/DoY fields above it).
+      function runStep6CrossStationMaxima() {
+        const year = parseInt(document.getElementById("step6-year").value, 10);
+        const doy_start = parseInt(
+          document.getElementById("step6-doy-start").value,
+          10,
+        );
+        const doy_end = parseInt(
+          document.getElementById("step6-doy-end").value,
+          10,
+        );
+        const th_cov = parseFloat(
+          document.getElementById("step6-th-cov").value,
+        );
+
+        const payload = {
+          year,
+          doy_start,
+          doy_end,
+          th_cov,
+          ndat_mode: getNdatMode(),
+        };
+        const cardKey = [year, doy_start, doy_end, th_cov].join("|");
+        runStep(
+          "/api/run/step6/cross-station-maxima",
+          payload,
+          "step6-maxima-grid",
+          cardKey,
+          (data) => {
+            let notes = "";
+            const missing = Object.keys(data.missing_stations);
+            if (missing.length) {
+              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+            }
+            return (
+              `<h3>Cross-station month-hour maxima (${data.year})</h3>` +
+              `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
+              notes +
+              buildStep6MaximaTable(data)
+            );
+          },
+        );
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1 @@
+.\app\python_portable\python.exe .\app\web_server.py
