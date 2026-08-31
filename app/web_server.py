@@ -50,11 +50,17 @@ import importlib.util
 import json
 import math
 import subprocess
+import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+
+# Makes pandas/numpy/matplotlib/pyarrow importable when this file is run by
+# app/python_portable/python.exe, an embeddable distribution whose python311._pth
+# has `import site` disabled and therefore never sees app/python_libraries on its own.
+sys.path.insert(0, str(Path(__file__).parent / "python_libraries"))
 
 import matplotlib
 # Must run before the first `import matplotlib.pyplot` anywhere - including
