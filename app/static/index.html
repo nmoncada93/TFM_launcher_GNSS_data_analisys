@@ -1066,7 +1066,7 @@
       </div>
       <div class="actions">
         <button onclick="runStep0()">Prepare data</button>
-        <button class="clear-btn" onclick="clearGrid('step0-grid')">
+        <button class="clear-btn" onclick="clearStep(0)">
           Clear
         </button>
       </div>
@@ -1132,7 +1132,7 @@
       </div>
       <div class="actions">
         <button onclick="runStep1()">Run</button>
-        <button class="clear-btn" onclick="clearGrid('step1-grid')">
+        <button class="clear-btn" onclick="clearStep(1)">
           Clear
         </button>
       </div>
@@ -1205,7 +1205,7 @@
       </div>
       <div class="actions">
         <button onclick="runStep2()">Run</button>
-        <button class="clear-btn" onclick="clearGrid('step2-grid')">
+        <button class="clear-btn" onclick="clearStep(2)">
           Clear
         </button>
       </div>
@@ -1451,7 +1451,7 @@
       </div>
       <div class="actions">
         <button onclick="runStep3()">Run</button>
-        <button class="clear-btn" onclick="clearGrid('step3-grid')">
+        <button class="clear-btn" onclick="clearStep(3)">
           Clear
         </button>
       </div>
@@ -1544,7 +1544,7 @@
       </div>
       <div class="actions">
         <button onclick="runStep4()">Run</button>
-        <button class="clear-btn" onclick="clearGrid('step4-grid')">
+        <button class="clear-btn" onclick="clearStep(4)">
           Clear
         </button>
       </div>
@@ -1638,7 +1638,7 @@
       </div>
       <div class="actions">
         <button onclick="runStep5()">Run</button>
-        <button class="clear-btn" onclick="clearGrid('step5-grid')">
+        <button class="clear-btn" onclick="clearStep(5)">
           Clear
         </button>
       </div>
@@ -1735,7 +1735,7 @@
       </div>
       <div class="actions">
         <button onclick="runStep6()">Run</button>
-        <button class="clear-btn" onclick="clearGrid('step6-grid')">
+        <button class="clear-btn" onclick="clearStep(6)">
           Clear
         </button>
       </div>
@@ -1894,7 +1894,8 @@
         const section = grid && grid.closest("section");
         if (!section) return;
         const badge = section.querySelector(".step-state");
-        section.dataset.state = state;
+        if (state) section.dataset.state = state;
+        else delete section.dataset.state;
         if (badge) {
           badge.textContent =
             { busy: "Running", done: "Done", error: "Failed" }[state] ||
@@ -1904,6 +1905,38 @@
 
       function clearGrid(gridId) {
         document.getElementById(gridId).innerHTML = "";
+      }
+
+      // Main "Clear" of Steps 0-6: puts the section back to how it looked
+      // before any Run - cards, summary rows, download links, the Run
+      // explanation and the state badge. Page only: nothing under results/
+      // is deleted and the form keeps its values. The comparison
+      // sub-sections keep their own clearGrid() buttons, so none of their
+      // grids is listed here.
+      const STEP_OUTPUT_IDS = {
+        0: ["step0-grid", "step0-summary-body", "step0-downloads"],
+        1: [
+          "step1-grid",
+          "step1-summary-body",
+          "step1-explanation",
+          "step1-downloads",
+        ],
+        2: [
+          "step2-grid",
+          "step2-summary-body",
+          "step2-explanation",
+          "step2-downloads",
+        ],
+        3: ["step3-grid", "step3-summary-body", "step3-downloads"],
+        4: ["step4-grid", "step4-summary-body", "step4-downloads"],
+        5: ["step5-grid", "step5-summary-body", "step5-downloads"],
+        6: ["step6-grid", "step6-downloads"],
+      };
+
+      function clearStep(stepNumber) {
+        STEP_OUTPUT_IDS[stepNumber].forEach((id) => clearGrid(id));
+        if (stepNumber === 0) setFieldStatus("step0-status", "", false);
+        setStepState(`step${stepNumber}-grid`, null);
       }
 
       // Single source of truth for the Ndat criterion selected in "General
