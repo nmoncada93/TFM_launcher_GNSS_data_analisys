@@ -34,6 +34,24 @@ HEATMAP_FONT_SIZES = {
 }
 
 
+# Colores de reserva para estaciones sin color propio en el STATION_COLORS
+# de cada script (p. ej. una estación añadida a stations.json para la web).
+# Ninguno coincide con los de UNSA/KOUG/WHIT/YELL (naranja/azul/verde/rojo).
+FALLBACK_STATION_COLORS = ["tab:purple", "tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
+
+
+def station_color(station, known_colors, stations):
+    """
+    Color de `station` en una figura comparativa: el suyo en known_colors
+    (el STATION_COLORS del script) o, si no lo tiene, uno de reserva distinto
+    para cada estación sin color de la figura, asignado por orden alfabético.
+    """
+    if station in known_colors:
+        return known_colors[station]
+    unknown = sorted(s for s in stations if s not in known_colors)
+    return FALLBACK_STATION_COLORS[unknown.index(station) % len(FALLBACK_STATION_COLORS)]
+
+
 def with_font_sizes(plot_function=None, *, sizes=None):
     """
     Dibuja la figura con los tamaños de FONT_SIZES, o con los de `sizes` si

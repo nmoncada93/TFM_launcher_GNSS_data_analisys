@@ -53,6 +53,9 @@ import plot_style
 # [A] STUDY CONFIGURATION - EDIT ONLY THIS SECTION
 # ======================================================================
 
+# CONSOLE DEFAULT - used only when this script is run directly. In web mode,
+# web_server.py passes the station list from app/stations.json instead
+# (this script never reads that file). Not accidental duplication: keep it.
 STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 YEAR = 2024
 DOY_START = 1
@@ -360,7 +363,7 @@ def save_hourly_comparison_plot(
         df_plot = hourly_by_station[station].sort_values("hour_local")
         ax.plot(
             df_plot["hour_local"], df_plot[freq_col],
-            marker="o", linewidth=1.5, color=STATION_COLORS.get(station), label=station,
+            marker="o", linewidth=1.5, color=plot_style.station_color(station, STATION_COLORS, stations), label=station,
         )
 
     ax.set_xticks(range(24))

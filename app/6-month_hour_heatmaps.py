@@ -58,6 +58,9 @@ STATION = "YELL"
 # module exists in this project (verified: 2.2/3.2/4.2/5.2 each keep their
 # own independent copy of this exact list) - this mirrors that established
 # convention rather than introducing a new shared dependency.
+# CONSOLE DEFAULT - used only when this script is run directly. In web mode,
+# web_server.py passes the station list from app/stations.json instead
+# (this script never reads that file). Not accidental duplication: keep it.
 STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 
 YEAR = 2024

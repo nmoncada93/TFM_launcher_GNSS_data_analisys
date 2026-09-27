@@ -58,6 +58,9 @@ import plot_style
 # [A] STUDY CONFIGURATION - EDIT ONLY THIS SECTION
 # ======================================================================
 
+# CONSOLE DEFAULT - used only when this script is run directly. In web mode,
+# web_server.py passes the station list from app/stations.json instead
+# (this script never reads that file). Not accidental duplication: keep it.
 STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 YEAR = 2024
 DOY_START = 1
@@ -472,7 +475,7 @@ def save_daily_comparison_plot(
         df_plot = daily_by_station[station].set_index("doy").reindex(full_doy)
         ax.plot(
             df_plot.index, df_plot["frequency_p99_pct"],
-            linewidth=1.0, color=STATION_COLORS.get(station), label=station,
+            linewidth=1.0, color=plot_style.station_color(station, STATION_COLORS, stations), label=station,
         )
 
     ax.set_xlim(doy_start, doy_end)

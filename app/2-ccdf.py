@@ -587,7 +587,7 @@ def save_cross_station_ccdf_plot(
 
     for station in stations:
         station_data = ccdf_by_station_month.get(station, {})
-        color = STATION_COLORS.get(station)
+        color = plot_style.station_color(station, STATION_COLORS, stations)
 
         for i, month in enumerate(months):
             if month not in station_data:

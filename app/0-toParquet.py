@@ -33,6 +33,10 @@ DOY_START = 1
 DOY_END = 366  # 2024 is a leap year
 
 # Station selection.
+# CONSOLE DEFAULTS - used only when this script is run directly. In web mode,
+# web_server.py temporarily replaces SELECTED_STATIONS and STATION_UTC_OFFSETS
+# with the contents of app/stations.json (this script never reads that file).
+# Not accidental duplication: keep them.
 USE_SELECTED_STATIONS = True
 SELECTED_STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 

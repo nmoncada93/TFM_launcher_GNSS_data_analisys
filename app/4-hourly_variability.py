@@ -323,7 +323,10 @@ def load_hourly_dataset(
         raise ValueError(
             f"Expected a single UTC offset for station data, found: {utc_offsets}"
         )
-    utc_offset_hours = int(utc_offsets[0])
+    # float, not int: fractional fixed offsets (e.g. 5.5, 5.75) are kept as
+    # they are. Only used for the axis label - hours are grouped by the
+    # 18_hour_local column Step 0 already computed.
+    utc_offset_hours = float(utc_offsets[0])
 
     prepared = df[df["doy_utc"].isin(df_valid["DoY"])].drop(columns=["17_utc_offset_hours"]).copy()
 
@@ -529,6 +532,16 @@ def save_hourly_plot(
 # [H] MAIN EXECUTION
 # ======================================================================
 
+def format_utc_offset(utc_offset_hours: float) -> str:
+    """
+    Label for a fixed UTC offset in hours: -3 -> "UTC-03:00", 5.5 ->
+    "UTC+05:30", 5.75 -> "UTC+05:45". Display only - no calculation uses it.
+    """
+    sign = "-" if utc_offset_hours < 0 else "+"
+    total_minutes = round(abs(utc_offset_hours) * 60)
+    return f"UTC{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
+
+
 def main():
     index_config = validate_index_supported(VALUE_COL)
     parquet_value_col = index_config["parquet_column"]
@@ -559,7 +572,7 @@ def main():
     prepared, summary, skipped_days, utc_offset_hours = load_hourly_dataset(
         valid_days, paths["parquet_path"], parquet_value_col, VALUE_COL, NDAT_MODE
     )
-    local_time_label = f"UTC{utc_offset_hours:+03d}:00"
+    local_time_label = format_utc_offset(utc_offset_hours)
 
     hourly = calculate_hourly_frequency(
         prepared, VALUE_COL, p_high, p_extreme, PERCENTILE_HIGH, PERCENTILE_EXTREME

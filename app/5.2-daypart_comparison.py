@@ -59,6 +59,9 @@ import plot_style
 # [A] STUDY CONFIGURATION - EDIT ONLY THIS SECTION
 # ======================================================================
 
+# CONSOLE DEFAULT - used only when this script is run directly. In web mode,
+# web_server.py passes the station list from app/stations.json instead
+# (this script never reads that file). Not accidental duplication: keep it.
 STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 YEAR = 2024
 DOY_START = 1
@@ -405,7 +408,7 @@ def save_comparison_plot(
 
     for i, station in enumerate(available_stations):
         offset = (i - (n_stations - 1) / 2) * width
-        color = STATION_COLORS.get(station)
+        color = plot_style.station_color(station, STATION_COLORS, available_stations)
         ax_p90.bar(x + offset, table[f"freq_p90_{station}"], width, color=color, label=station)
         ax_p99.bar(x + offset, table[f"freq_p99_{station}"], width, color=color, label=station)
 

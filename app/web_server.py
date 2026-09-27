@@ -24,7 +24,7 @@ The X.2 cross-station comparisons (2.2/3.2/4.2/5.2) each expose a pure
 function and are wired the same simple way as Steps 1-3.
 
 Step 0 has no `station` field, unlike every other step - it always
-processes every configured SELECTED_STATIONS station in one pass (each
+processes every station listed in stations.json in one pass (each
 daily RAW file mixes all stations together, see 0-toParquet.py). It does
 have one field no other step has: `raw_dir`, the folder holding that
 year's daily RAW files (defaults to step0.DATA_DIR, "datos_Estudio"),
@@ -84,6 +84,64 @@ PORT = 8000
 APP_DIR = Path(__file__).parent
 STATIC_DIR = APP_DIR / "static"
 RESULTS_ROOT = Path("results")  # relative to CWD, same convention as every step script
+
+# Stations used by the WEB mode only: codes and fixed UTC offsets. Located
+# next to this file (not relative to CWD). The scientific scripts never read
+# it - web_server.py injects it into them (explicit `stations=` arguments or
+# _patched_globals), and each script keeps its own console defaults.
+STATIONS_JSON = APP_DIR / "stations.json"
+
+
+class StationsConfigError(Exception):
+    """stations.json is missing or invalid - reported to the web, no fallback."""
+
+
+def load_stations_config(path: Path = STATIONS_JSON) -> list[tuple[str, float]]:
+    """
+    Reads and validates stations.json, returning [(code, utc_offset_hours)]
+    in file order. Read on every request that needs it, so edits to the file
+    take effect without restarting the server. Any problem raises
+    StationsConfigError - deliberately no silent fallback to a hardcoded list.
+    """
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise StationsConfigError(f"stations.json not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise StationsConfigError(f"stations.json is not valid JSON: {exc}")
+
+    stations = raw.get("stations") if isinstance(raw, dict) else None
+    if not isinstance(stations, list):
+        raise StationsConfigError('stations.json must contain a "stations" list.')
+    if not stations:
+        raise StationsConfigError('stations.json: the "stations" list is empty.')
+
+    config = []
+    for i, entry in enumerate(stations):
+        if not isinstance(entry, dict):
+            raise StationsConfigError(f"stations.json: entry {i} is not an object.")
+        code = entry.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise StationsConfigError(f'stations.json: entry {i} has an empty or non-text "code".')
+        if code in (c for c, _ in config):
+            raise StationsConfigError(f'stations.json: duplicated station code "{code}".')
+        if "utc_offset_hours" not in entry:
+            raise StationsConfigError(f'stations.json: station "{code}" has no "utc_offset_hours".')
+        offset = entry["utc_offset_hours"]
+        # Any finite number, fractional offsets included (e.g. 5.5, 5.75).
+        if isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset):
+            raise StationsConfigError(
+                f'stations.json: station "{code}" has a non-numeric or non-finite '
+                f'"utc_offset_hours": {offset!r}.'
+            )
+        config.append((code, offset))
+    return config
+
+
+def _unconfigured(requested: list[str], config: list[tuple[str, float]]) -> list[str]:
+    """Requested station codes that are not in stations.json."""
+    known = {code for code, _ in config}
+    return [s for s in requested if s not in known]
 
 # Switched away from System.Windows.Forms.FolderBrowserDialog after a real
 # user test hung indefinitely on "Waiting for dialog..." with no visible
@@ -260,11 +318,42 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _stations_config(self):
+        """stations.json, or None after answering with its error (no analysis runs)."""
+        try:
+            return load_stations_config()
+        except StationsConfigError as exc:
+            self._send_json(500, {"ok": False, "error": str(exc)})
+            return None
+
+    def _reject_unconfigured(self, requested: list[str], config) -> bool:
+        """True (after answering 400) if any requested station is not in stations.json."""
+        unknown = _unconfigured(requested, config)
+        if unknown:
+            self._send_json(400, {
+                "ok": False,
+                "error": f"Station(s) not configured in stations.json: {', '.join(unknown)}",
+            })
+            return True
+        return False
+
     def do_GET(self) -> None:
         route = urlparse(self.path).path
 
         if route in ("/", "/index.html"):
             self._send_file(STATIC_DIR / "index.html")
+            return
+
+        if route == "/api/stations":
+            try:
+                config = load_stations_config()
+            except StationsConfigError as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+            self._send_json(200, {
+                "ok": True,
+                "stations": [{"code": c, "utc_offset_hours": o} for c, o in config],
+            })
             return
 
         if route.startswith("/results/"):
@@ -445,7 +534,7 @@ class Handler(BaseHTTPRequestHandler):
         and returns nothing, same shape as Steps 4-6. Same
         _patched_globals + call-the-real-main()-then-re-resolve-paths
         pattern as _handle_run_step6, with two differences: no `station`
-        field (Step 0 always processes every SELECTED_STATIONS station in
+        field (Step 0 always processes every stations.json station in
         one pass), and one new field, `raw_dir` - the folder holding that
         year's daily RAW files, defaulting to step0.DATA_DIR
         ("datos_Estudio"). Used directly as a local filesystem path, not
@@ -472,6 +561,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step0.YEAR))
             doy_start = int(params.get("doy_start", step0.DOY_START))
@@ -485,9 +578,15 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
 
+            # Web mode: station subset and fixed UTC offsets come from
+            # stations.json (stations in the RAW files but not in the JSON are
+            # ignored). _patched_globals restores step0's console defaults.
             with _patched_globals(
                 step0, YEAR=year, DATA_DIR=raw_dir,
                 DOY_START=doy_start, DOY_END=doy_end,
+                USE_SELECTED_STATIONS=True,
+                SELECTED_STATIONS=[code for code, _ in config],
+                STATION_UTC_OFFSETS=dict(config),
             ):
                 step0.main()  # the real, unmodified main()
 
@@ -519,8 +618,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             station = str(params.get("station", step1.STATION))
+            if self._reject_unconfigured([station], config):
+                return
             year = int(params.get("year", step1.YEAR))
             doy_start = int(params.get("doy_start", step1.DOY_START))
             doy_end = int(params.get("doy_end", step1.DOY_END))
@@ -569,8 +674,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             station = str(params.get("station", step2.STATION))
+            if self._reject_unconfigured([station], config):
+                return
             year = int(params.get("year", step2.YEAR))
             doy_start = int(params.get("doy_start", step2.DOY_START))
             doy_end = int(params.get("doy_end", step2.DOY_END))
@@ -645,8 +756,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             station = str(params.get("station", step2.STATION))
+            if self._reject_unconfigured([station], config):
+                return
             year = int(params.get("year", step2.YEAR))
             doy_start = int(params.get("doy_start", step2.DOY_START))
             doy_end = int(params.get("doy_end", step2.DOY_END))
@@ -719,6 +836,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step2.YEAR))
             doy_start = int(params.get("doy_start", step2.DOY_START))
@@ -727,6 +848,8 @@ class Handler(BaseHTTPRequestHandler):
             ndat_mode = params.get("ndat_mode", None)
             value_col = "roti_l1"
             stations = sorted({str(s) for s in params.get("stations", [])})
+            if self._reject_unconfigured(stations, config):
+                return
             months = sorted({int(m) for m in params.get("months", [])})
 
             if not stations:
@@ -818,6 +941,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step2.YEAR))
             doy_start = int(params.get("doy_start", step2.DOY_START))
@@ -828,7 +955,7 @@ class Handler(BaseHTTPRequestHandler):
             index_config = step2.validate_index_supported(value_col)
 
             grid = {}
-            for station in step2_2.STATIONS:
+            for station in [code for code, _ in config]:
                 paths = step2.resolve_paths(
                     station, year, doy_start, doy_end, th_cov, value_col, index_config,
                     ndat_mode=ndat_mode,
@@ -855,6 +982,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step2_2.YEAR))
             doy_start = int(params.get("doy_start", step2_2.DOY_START))
@@ -864,7 +995,7 @@ class Handler(BaseHTTPRequestHandler):
             value_col = "roti_l1"  # only scientifically supported index
 
             result = step2_2.run_ccdf_comparison(
-                stations=step2_2.STATIONS,
+                stations=[code for code, _ in config],
                 year=year, doy_start=doy_start, doy_end=doy_end,
                 value_col=value_col, th_cov=th_cov, ndat_mode=ndat_mode,
             )
@@ -906,8 +1037,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             station = str(params.get("station", step3.STATION))
+            if self._reject_unconfigured([station], config):
+                return
             year = int(params.get("year", step3.YEAR))
             doy_start = int(params.get("doy_start", step3.DOY_START))
             doy_end = int(params.get("doy_end", step3.DOY_END))
@@ -975,6 +1112,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step3_2.YEAR))
             doy_start = int(params.get("doy_start", step3_2.DOY_START))
@@ -984,7 +1125,7 @@ class Handler(BaseHTTPRequestHandler):
             value_col = "roti_l1"  # only scientifically supported index
 
             result = step3_2.run_temporal_comparison(
-                stations=step3_2.STATIONS,
+                stations=[code for code, _ in config],
                 year=year, doy_start=doy_start, doy_end=doy_end,
                 value_col=value_col, top_n=top_n, ndat_mode=ndat_mode,
             )
@@ -1042,8 +1183,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             station = str(params.get("station", step4.STATION))
+            if self._reject_unconfigured([station], config):
+                return
             year = int(params.get("year", step4.YEAR))
             doy_start = int(params.get("doy_start", step4.DOY_START))
             doy_end = int(params.get("doy_end", step4.DOY_END))
@@ -1095,7 +1242,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_run_step4_comparison(self) -> None:
         """
         Unlike Step 4 itself, 4.2-hourly_comparison.py has a pure
-        run_hourly_comparison() (station list comes from its own STATIONS
+        run_hourly_comparison() (station list comes from stations.json, not its own STATIONS
         config, same as 2.2/3.2 - not a per-request field) - wired the
         same simple way as the other X.2 comparison endpoints, no
         _patched_globals needed here.
@@ -1106,6 +1253,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step4_2.YEAR))
             doy_start = int(params.get("doy_start", step4_2.DOY_START))
@@ -1114,7 +1265,7 @@ class Handler(BaseHTTPRequestHandler):
             value_col = "roti_l1"  # only scientifically supported index
 
             result = step4_2.run_hourly_comparison(
-                stations=step4_2.STATIONS,
+                stations=[code for code, _ in config],
                 year=year, doy_start=doy_start, doy_end=doy_end,
                 value_col=value_col, ndat_mode=ndat_mode,
             )
@@ -1165,8 +1316,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             station = str(params.get("station", step5.STATION))
+            if self._reject_unconfigured([station], config):
+                return
             year = int(params.get("year", step5.YEAR))
             doy_start = int(params.get("doy_start", step5.DOY_START))
             doy_end = int(params.get("doy_end", step5.DOY_END))
@@ -1225,6 +1382,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step5_2.YEAR))
             doy_start = int(params.get("doy_start", step5_2.DOY_START))
@@ -1234,7 +1395,7 @@ class Handler(BaseHTTPRequestHandler):
             value_col = "roti_l1"  # only scientifically supported index
 
             result = step5_2.run_daypart_comparison(
-                stations=step5_2.STATIONS,
+                stations=[code for code, _ in config],
                 year=year, doy_start=doy_start, doy_end=doy_end,
                 value_col=value_col, th_cov=th_cov, ndat_mode=ndat_mode,
             )
@@ -1283,8 +1444,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             station = str(params.get("station", step6.STATION))
+            if self._reject_unconfigured([station], config):
+                return
             year = int(params.get("year", step6.YEAR))
             doy_start = int(params.get("doy_start", step6.DOY_START))
             doy_end = int(params.get("doy_end", step6.DOY_END))
@@ -1341,6 +1508,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
             return
 
+        config = self._stations_config()  # stations.json - web-only station list/offsets
+        if config is None:
+            return
+
         try:
             year = int(params.get("year", step6.YEAR))
             doy_start = int(params.get("doy_start", step6.DOY_START))
@@ -1351,7 +1522,7 @@ class Handler(BaseHTTPRequestHandler):
 
             index_config = step6.validate_index_supported(value_col)
             result = step6.get_cross_station_maxima(
-                step6.STATIONS, year, doy_start, doy_end, th_cov, value_col,
+                [code for code, _ in config], year, doy_start, doy_end, th_cov, value_col,
                 index_config, ndat_mode,
             )
 

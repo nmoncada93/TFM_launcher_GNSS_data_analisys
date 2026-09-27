@@ -640,7 +640,7 @@
       }
 
       /* ==================================================================
-   Cross-station CCDF matrix - 12 months x 4 stations.
+   Cross-station CCDF matrix - 12 months x the stations in stations.json.
    This is the best piece of the interface and the one most looked
    at. Nothing moves; the header row and the month column are simply
    pinned, because past the third row you could no longer tell which
@@ -842,7 +842,7 @@
    CORRECTIFS mesures au navigateur (et non a l'oeil)
    ================================================================== */
 
-      /* 2. La matrice 12 x 4 devient un VOLET a en-tetes figes.
+      /* 2. La matrice 12 x N (stations.json) devient un VOLET a en-tetes figes.
    Le JS l'enveloppe dans un conteneur overflow-x:auto, ce qui en
    fait un conteneur de defilement : position:sticky s'y accrochait au
    lieu de s'accrocher a la page, donc l'en-tete partait quand meme.
@@ -1111,10 +1111,6 @@
         <label
           >Station
           <select id="step1-station">
-            <option>UNSA</option>
-            <option>KOUG</option>
-            <option>WHIT</option>
-            <option>YELL</option>
           </select>
         </label>
         <label
@@ -1188,10 +1184,6 @@
         <label
           >Station
           <select id="step2-station">
-            <option>UNSA</option>
-            <option>KOUG</option>
-            <option>WHIT</option>
-            <option>YELL</option>
           </select>
         </label>
         <label
@@ -1264,30 +1256,13 @@
           </summary>
           <p class="intro">
             All individual monthly CCDF plots already saved by Step 2, for the
-            Year/DoY/threshold set above - 12 months &times; 4 stations. Loads
+            Year/DoY/threshold set above - 12 months &times; each station in stations.json. Loads
             once when you open this section, does not recompute anything.
             &ldquo;&mdash;&rdquo; means that station/month has no Step 2 output
             yet at these settings.
           </p>
 
-          <div class="station-filter" id="step2-ccdf-grid-station-filter">
-            <label
-              ><input type="checkbox" checked data-station-filter="UNSA" />
-              UNSA</label
-            >
-            <label
-              ><input type="checkbox" checked data-station-filter="KOUG" />
-              KOUG</label
-            >
-            <label
-              ><input type="checkbox" checked data-station-filter="WHIT" />
-              WHIT</label
-            >
-            <label
-              ><input type="checkbox" checked data-station-filter="YELL" />
-              YELL</label
-            >
-          </div>
+          <div class="station-filter" id="step2-ccdf-grid-station-filter"></div>
 
           <div id="step2-ccdf-grid-container">Loading...</div>
         </details>
@@ -1304,10 +1279,6 @@
         <label style="max-width: 200px"
           >Station
           <select id="step2-ccdf-station">
-            <option>UNSA</option>
-            <option>KOUG</option>
-            <option>WHIT</option>
-            <option>YELL</option>
           </select>
         </label>
 
@@ -1400,12 +1371,7 @@
           top.
         </p>
 
-        <div class="station-filter" id="step2-cross-station-stations">
-          <label><input type="checkbox" checked value="UNSA" /> UNSA</label>
-          <label><input type="checkbox" checked value="KOUG" /> KOUG</label>
-          <label><input type="checkbox" checked value="WHIT" /> WHIT</label>
-          <label><input type="checkbox" checked value="YELL" /> YELL</label>
-        </div>
+        <div class="station-filter" id="step2-cross-station-stations"></div>
 
         <label style="max-width: 200px"
           >Month
@@ -1464,10 +1430,6 @@
         <label
           >Station
           <select id="step3-station">
-            <option>UNSA</option>
-            <option>KOUG</option>
-            <option>WHIT</option>
-            <option>YELL</option>
           </select>
         </label>
         <label
@@ -1561,10 +1523,6 @@
         <label
           >Station
           <select id="step4-station">
-            <option>UNSA</option>
-            <option>KOUG</option>
-            <option>WHIT</option>
-            <option>YELL</option>
           </select>
         </label>
         <label
@@ -1659,10 +1617,6 @@
         <label
           >Station
           <select id="step5-station">
-            <option>UNSA</option>
-            <option>KOUG</option>
-            <option>WHIT</option>
-            <option>YELL</option>
           </select>
         </label>
         <label
@@ -1760,10 +1714,6 @@
         <label
           >Station
           <select id="step6-station">
-            <option>UNSA</option>
-            <option>KOUG</option>
-            <option>WHIT</option>
-            <option>YELL</option>
           </select>
         </label>
         <label
@@ -2666,7 +2616,7 @@
       }
 
       function buildStep2CcdfGridTable(grid) {
-        const stations = ["UNSA", "KOUG", "WHIT", "YELL"];
+        const stations = STATIONS; // from /api/stations (stations.json)
         let header =
           "<tr><th>Month</th>" +
           stations.map((st) => `<th data-station="${st}">${st}</th>`).join("") +
@@ -2688,19 +2638,19 @@
         );
       }
 
+      // One listener on the container: its checkboxes are created by
+      // loadStations() after the page loads.
       document
-        .querySelectorAll(
-          "#step2-ccdf-grid-station-filter input[data-station-filter]",
-        )
-        .forEach((cb) => {
-          cb.addEventListener("change", function () {
-            const visible = this.checked ? "" : "none";
-            document
-              .querySelectorAll(
-                `#step2-ccdf-grid-container [data-station="${this.dataset.stationFilter}"]`,
-              )
-              .forEach((cell) => (cell.style.display = visible));
-          });
+        .getElementById("step2-ccdf-grid-station-filter")
+        .addEventListener("change", function (event) {
+          const cb = event.target;
+          if (!cb.matches("input[data-station-filter]")) return;
+          const visible = cb.checked ? "" : "none";
+          document
+            .querySelectorAll(
+              `#step2-ccdf-grid-container [data-station="${cb.dataset.stationFilter}"]`,
+            )
+            .forEach((cell) => (cell.style.display = visible));
         });
 
       function upsertStep3SummaryRow(tbodyId, station, data) {
@@ -3252,6 +3202,52 @@
           },
         );
       }
+      // Stations shown and used by the web come from app/stations.json, served
+      // by web_server.py at /api/stations - no station list is written here.
+      let STATIONS = [];
+      const STATION_SELECT_IDS = [
+        "step1-station",
+        "step2-station",
+        "step2-ccdf-station",
+        "step3-station",
+        "step4-station",
+        "step5-station",
+        "step6-station",
+      ];
+
+      async function loadStations() {
+        try {
+          const response = await fetch("/api/stations");
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            throw new Error(data.error || response.statusText);
+          }
+          STATIONS = data.stations.map((s) => s.code);
+        } catch (err) {
+          const banner = document.createElement("div");
+          banner.id = "stations-config-error";
+          banner.style.cssText =
+            "background:#fdecea;color:#900;border:1px solid #900;padding:0.75rem 1rem;margin:0.5rem;font-weight:bold";
+          banner.textContent =
+            "Station configuration error (app/stations.json): " +
+            (err.message || err) +
+            ". Fix the file and reload the page - no analysis can run until then.";
+          document.body.prepend(banner);
+          return;
+        }
+        for (const id of STATION_SELECT_IDS) {
+          const select = document.getElementById(id);
+          select.innerHTML = STATIONS.map((st) => `<option>${st}</option>`).join("");
+        }
+        document.getElementById("step2-ccdf-grid-station-filter").innerHTML = STATIONS.map(
+          (st) =>
+            `<label><input type="checkbox" checked data-station-filter="${st}" /> ${st}</label>`,
+        ).join("");
+        document.getElementById("step2-cross-station-stations").innerHTML = STATIONS.map(
+          (st) => `<label><input type="checkbox" checked value="${st}" /> ${st}</label>`,
+        ).join("");
+      }
+      loadStations();
     </script>
   </body>
 </html>

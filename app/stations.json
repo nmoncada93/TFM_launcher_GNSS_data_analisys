@@ -1,0 +1,8 @@
+{
+  "stations": [
+    { "code": "UNSA", "utc_offset_hours": -3 },
+    { "code": "KOUG", "utc_offset_hours": -3 },
+    { "code": "WHIT", "utc_offset_hours": -7 },
+    { "code": "YELL", "utc_offset_hours": -7 }
+  ]
+}

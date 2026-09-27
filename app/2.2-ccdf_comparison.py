@@ -52,6 +52,9 @@ import plot_style
 # [A] STUDY CONFIGURATION - EDIT ONLY THIS SECTION
 # ======================================================================
 
+# CONSOLE DEFAULT - used only when this script is run directly. In web mode,
+# web_server.py passes the station list from app/stations.json instead
+# (this script never reads that file). Not accidental duplication: keep it.
 STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 YEAR = 2024
 DOY_START = 1
@@ -69,6 +72,10 @@ NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
 # warning (MIN_VALID_DAYS_PER_MONTH) - reused here, not re-invented, so
 # a month flagged as low-support means the same thing in both scripts.
 MIN_VALID_DAYS_PER_MONTH = 10
+
+# Color fixed per station (same colors as 2-ccdf.py / 3.2 / 4.2 / 5.2);
+# stations without an entry get a distinct fallback color (plot_style).
+STATION_COLORS = {"UNSA": "tab:orange", "KOUG": "tab:blue", "WHIT": "tab:green", "YELL": "tab:red"}
 
 SHOW_PLOTS = False
 PLOT_DPI = 250
@@ -368,7 +375,8 @@ def save_comparison_plot(
 
         for ax, pct in ((ax_p90, "p90"), (ax_p99, "p99")):
             ax.plot(
-                month_labels, table[f"{pct}_{station}"], marker="o", label=station
+                month_labels, table[f"{pct}_{station}"], marker="o", label=station,
+                color=plot_style.station_color(station, STATION_COLORS, available_stations),
             )
             if low_support.any():
                 ax.scatter(
