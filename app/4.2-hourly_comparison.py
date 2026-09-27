@@ -46,6 +46,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import ndat_filter
+import plot_style
 
 
 # ======================================================================
@@ -328,6 +329,7 @@ def save_comparison_table(table: pd.DataFrame, paths: dict) -> None:
 # ======================================================================
 # [F] OUTPUT - COMBINED PLOT (PNG), one call per percentile
 # ======================================================================
+@plot_style.with_font_sizes
 def save_hourly_comparison_plot(
     stations: list[str],
     hourly_by_station: dict,

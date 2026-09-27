@@ -42,6 +42,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import ndat_filter
+import plot_style
 
 
 # ======================================================================
@@ -103,6 +104,12 @@ HOUR_COL_RAW = "18_hour_local"
 SHOW_PLOTS = False
 PLOT_DPI = 250
 SAVE_SUPPORT_HEATMAP = True
+
+# Width that fig.colorbar() reserves to the right of the heatmap, as a
+# fraction of the heatmap axes (matplotlib default 0.15). The bar keeps its
+# shape (it is set by its aspect ratio); a smaller value only trims the
+# unused white space the default leaves to its right.
+COLORBAR_FRACTION = 0.10
 
 MONTH_LABELS = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -553,6 +560,7 @@ def cells_at_max(matrix: np.ndarray) -> tuple[list[tuple[int, int]], float]:
     return cells, max_value
 
 
+@plot_style.with_font_sizes(sizes=plot_style.HEATMAP_FONT_SIZES)
 def save_month_hour_heatmap(
     df_month_hour: pd.DataFrame,
     value_column: str,
@@ -584,7 +592,7 @@ def save_month_hour_heatmap(
     ax.set_yticks(range(0, 12))
     ax.set_yticklabels(MONTH_LABELS)
 
-    cbar = fig.colorbar(image, ax=ax)
+    cbar = fig.colorbar(image, ax=ax, fraction=COLORBAR_FRACTION)
     cbar.set_label(colorbar_label)
 
     finite_values = matrix[np.isfinite(matrix)]
@@ -610,7 +618,7 @@ def save_month_hour_heatmap(
         fig.text(
             0.5, 0.01,
             f"Maximum: {formatted_max} at {location_text}",
-            ha="center", va="bottom", fontsize=9,
+            ha="center", va="bottom", fontsize=plot_style.HEATMAP_FONT_SIZES["text"],
         )
 
     fig.tight_layout(rect=(0.0, 0.055, 1.0, 1.0))

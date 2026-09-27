@@ -1,3 +1,5 @@
 /database/
 /results/
 /.portable_runtime_cache/
+__pycache__/
+*.py[cod]

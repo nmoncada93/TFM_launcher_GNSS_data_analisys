@@ -30,6 +30,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import ndat_filter
+import plot_style
 
 
 # ======================================================================
@@ -600,6 +601,7 @@ def validate_daypart_results(
 # [H] PLOT
 # ======================================================================
 
+@plot_style.with_font_sizes
 def save_daypart_plot(
     df_daypart: pd.DataFrame,
     out_png: Path,
@@ -661,7 +663,7 @@ def save_daypart_plot(
                 xytext=(0, 3),
                 textcoords="offset points",
                 ha="center",
-                fontsize=8,
+                fontsize=plot_style.FONT_SIZES["text"],
             )
 
     max_frequency = float(

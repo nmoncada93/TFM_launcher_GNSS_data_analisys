@@ -20,6 +20,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import plot_style
+
 # ======================================================================
 # [A] STUDY CONFIGURATION
 # ======================================================================
@@ -369,6 +371,7 @@ def save_results_csv(df_results: pd.DataFrame, output_csv: Path) -> None:
     print(f"\nResults saved to {output_csv}")
 
 
+@plot_style.with_font_sizes
 def create_coverage_plot(
     df_results: pd.DataFrame,
     th_cov: float,
@@ -427,7 +430,7 @@ def create_coverage_plot(
         0.5, 0.01,
         footer_text,
         ha="center",
-        fontsize=9
+        fontsize=plot_style.FONT_SIZES["text"]
     )
 
     plt.tight_layout()

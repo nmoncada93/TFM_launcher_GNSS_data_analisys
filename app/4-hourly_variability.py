@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 import ndat_filter
+import plot_style
 
 
 # ======================================================================
@@ -474,6 +475,7 @@ def validate_results(
 # [G] PLOT
 # ======================================================================
 
+@plot_style.with_font_sizes
 def save_hourly_plot(
     hourly: pd.DataFrame,
     p_high: float,

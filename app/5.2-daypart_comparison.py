@@ -52,6 +52,7 @@ import numpy as np
 import pandas as pd
 
 import ndat_filter
+import plot_style
 
 
 # ======================================================================
@@ -382,6 +383,7 @@ def save_comparison_table(table: pd.DataFrame, output_csv: Path) -> None:
 # ======================================================================
 # [F] OUTPUT - COMBINED PLOT (PNG)
 # ======================================================================
+@plot_style.with_font_sizes
 def save_comparison_plot(
     table: pd.DataFrame,
     available_stations: list[str],

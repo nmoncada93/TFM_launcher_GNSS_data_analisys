@@ -45,6 +45,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import ndat_filter
+import plot_style
 
 
 # ======================================================================
@@ -337,6 +338,7 @@ def save_comparison_table(table: pd.DataFrame, output_csv: Path) -> None:
 # ======================================================================
 # [F] OUTPUT - COMBINED PLOT (PNG)
 # ======================================================================
+@plot_style.with_font_sizes
 def save_comparison_plot(
     table: pd.DataFrame,
     available_stations: list[str],
@@ -382,7 +384,7 @@ def save_comparison_plot(
                         ax.annotate(
                             f"n={int(n_days)}", (m, value),
                             textcoords="offset points", xytext=(0, 8),
-                            fontsize=7, color="red", ha="center",
+                            fontsize=plot_style.FONT_SIZES["text"], color="red", ha="center",
                         )
 
     ax_p90.set_title(f"Monthly {label} percentiles - station comparison")
@@ -399,7 +401,7 @@ def save_comparison_plot(
         0.5, 0.01,
         f"x = month with fewer than {min_valid_days_per_month} valid days "
         "for that station (low statistical support)",
-        ha="center", fontsize=8, color="red",
+        ha="center", fontsize=plot_style.FONT_SIZES["text"], color="red",
     )
     fig.tight_layout(rect=(0, 0.02, 1, 1))
     fig.savefig(output_png, dpi=plot_dpi)

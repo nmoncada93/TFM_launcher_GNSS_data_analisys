@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 import ndat_filter
+import plot_style
 
 
 # ======================================================================
@@ -460,6 +461,7 @@ def doy_to_month(year: int, doy: int) -> int:
 # ======================================================================
 # [G] PLOT
 # ======================================================================
+@plot_style.with_font_sizes
 def save_daily_frequency_plot(
     df_daily: pd.DataFrame,
     threshold_high: float,

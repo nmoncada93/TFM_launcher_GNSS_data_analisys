@@ -25,6 +25,7 @@ from datetime import datetime
 import numpy as np
 
 import ndat_filter
+import plot_style
 
 # ======================================================================
 # [A] CONFIG DEL ESTUDIO (TOCAR SOLO AQUÍ)
@@ -404,6 +405,7 @@ def month_color(month: int):
     return cmap((month - 1) / 12)
 
 
+@plot_style.with_font_sizes
 def save_ccdf_plot(
     month: int,
     x: np.ndarray,
@@ -461,6 +463,7 @@ def save_ccdf_plot(
     plt.close()
 
 
+@plot_style.with_font_sizes
 def save_multi_ccdf_plot(
     ccdf_by_month: dict,
     pcts_by_month: dict,
@@ -553,6 +556,7 @@ def save_multi_ccdf_plot(
     plt.close()
 
 
+@plot_style.with_font_sizes
 def save_cross_station_ccdf_plot(
     ccdf_by_station_month: dict,
     stations: list[str],
@@ -620,7 +624,7 @@ def save_cross_station_ccdf_plot(
     )
 
     plt.grid(True, which="both", alpha=0.3)
-    plt.legend(fontsize=8)
+    plt.legend(fontsize=plot_style.FONT_SIZES["legend"])
     plt.tight_layout()
 
     plt.savefig(out_png, dpi=250)
@@ -631,6 +635,7 @@ def save_cross_station_ccdf_plot(
     plt.close()
 
 
+@plot_style.with_font_sizes
 def save_monthly_percentiles_plot(
     df_pcts: pd.DataFrame,
     out_png: Path,
@@ -724,7 +729,7 @@ def save_monthly_percentiles_plot(
             xytext=(0, 10),
             textcoords="offset points",
             ha="center",
-            fontsize=8
+            fontsize=plot_style.FONT_SIZES["text"]
         )
 
     months = list(range(1, 13))
