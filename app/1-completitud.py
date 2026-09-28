@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import plot_style
+import project_paths
 
 # ======================================================================
 # [A] STUDY CONFIGURATION
@@ -67,14 +68,14 @@ def resolve_paths(station: str, year: int, doy_start: int, doy_end: int, th_cov:
     different station/year.
     """
     parquet_path = (
-        Path("results") / station / str(year) / "0_parquet"
+        project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
         / f"0_{station}_{year}_observations.parquet"
     )
     global_inventory_csv = (
-        Path("results") / "global" / str(year) / f"0_raw_file_inventory_{year}.csv"
+        project_paths.RESULTS_ROOT / "global" / str(year) / f"0_raw_file_inventory_{year}.csv"
     )
 
-    results_dir = Path("results") / station / str(year) / "1_completeness"
+    results_dir = project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
     output_tag = f"{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}"
 
     return {

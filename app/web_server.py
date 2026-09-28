@@ -78,12 +78,17 @@ matplotlib.use("Agg")
 
 import pandas as pd
 
+import project_paths
+
 HOST = "127.0.0.1"
 PORT = 8000
 
 APP_DIR = Path(__file__).parent
 STATIC_DIR = APP_DIR / "static"
-RESULTS_ROOT = Path("results")  # relative to CWD, same convention as every step script
+# <project>/results whatever the CWD - the same object every step script
+# builds its paths from (project_paths.py), so the /results/... URLs below
+# (path.relative_to(RESULTS_ROOT)) always match the files the steps write.
+RESULTS_ROOT = project_paths.RESULTS_ROOT
 
 # Stations used by the WEB mode only: codes and fixed UTC offsets. Located
 # next to this file (not relative to CWD). The scientific scripts never read

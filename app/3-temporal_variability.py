@@ -32,6 +32,7 @@ import pandas as pd
 
 import ndat_filter
 import plot_style
+import project_paths
 
 
 # ======================================================================
@@ -153,15 +154,15 @@ def resolve_paths(
     (ndat_config["file_tag"]) - mismo mecanismo que ya usa 2-ccdf.py.
     """
     parquet_path = (
-        Path("results") / station / str(year) / "0_parquet"
+        project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
         / f"0_{station}_{year}_observations.parquet"
     )
     coverage_csv = (
-        Path("results") / station / str(year) / "1_completeness"
+        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
         / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
     )
 
-    index_dir = Path("results") / station / str(year) / "3_temporal_variability" / value_col
+    index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
 
     if ndat_mode is None:
         ndat_dir = index_dir

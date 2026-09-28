@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+import project_paths
+
 
 # ======================================================================
 # [A] STUDY CONFIGURATION - EDIT ONLY THIS SECTION
@@ -28,7 +30,7 @@ import pyarrow.parquet as pq
 
 YEAR = 2024
 DATA_DIR = Path("datos_Estudio")
-RESULTS_DIR = Path("results")
+RESULTS_DIR = project_paths.RESULTS_ROOT  # <project>/results, whatever the CWD
 DOY_START = 1
 DOY_END = 366  # 2024 is a leap year
 
@@ -459,7 +461,9 @@ def main() -> None:
             "utc_offset_hours": offset,
             "longitude_deg": meta.get("longitude_deg", np.nan),
             "latitude_deg": meta.get("latitude_deg", np.nan),
-            "parquet_file": str(out_path),
+            # Relative to the project root (results\<ST>\...), as before
+            # results/ was anchored: no machine-specific absolute path in the CSV.
+            "parquet_file": str(out_path.relative_to(project_paths.PROJECT_ROOT)),
         })
 
         print(

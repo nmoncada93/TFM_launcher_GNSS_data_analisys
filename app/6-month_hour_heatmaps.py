@@ -43,6 +43,7 @@ import matplotlib.pyplot as plt
 
 import ndat_filter
 import plot_style
+import project_paths
 
 
 # ======================================================================
@@ -213,17 +214,17 @@ def resolve_paths(
     5-daypart_variability.py::resolve_paths().
     """
     parquet_path = (
-        Path("results") / station / str(year) / "0_parquet"
+        project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
         / f"0_{station}_{year}_observations.parquet"
     )
     coverage_csv = (
-        Path("results") / station / str(year) / "1_completeness"
+        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
         / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
     )
 
     doy_tag = f"DOY{doy_start}_{doy_end}"
-    step3_index_dir = Path("results") / station / str(year) / "3_temporal_variability" / value_col
-    index_dir = Path("results") / station / str(year) / "6_month_hour_heatmaps" / value_col
+    step3_index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
+    index_dir = project_paths.RESULTS_ROOT / station / str(year) / "6_month_hour_heatmaps" / value_col
 
     if ndat_mode is None:
         step3_dir = step3_index_dir

@@ -47,6 +47,7 @@ import pandas as pd
 
 import ndat_filter
 import plot_style
+import project_paths
 
 
 # ======================================================================
@@ -166,7 +167,7 @@ def resolve_station_hourly_csv(
     directly, a pre-existing deviation from CLAUDE.md section 11 unrelated
     to Ndat, already fixed the same way in 3.2-temporal_comparison.py).
     """
-    index_dir = Path("results") / station / str(year) / "4_hourly_variability" / value_col
+    index_dir = project_paths.RESULTS_ROOT / station / str(year) / "4_hourly_variability" / value_col
 
     if ndat_mode is None:
         ndat_dir = index_dir
@@ -203,7 +204,7 @@ def resolve_comparison_paths(
     this branch - same mechanism already validated in
     2.2/3.2's resolve_comparison_paths().
     """
-    base_dir = Path("results") / "global" / str(year) / "4_hourly_comparison"
+    base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "4_hourly_comparison"
 
     if ndat_mode is None:
         comparison_dir = base_dir

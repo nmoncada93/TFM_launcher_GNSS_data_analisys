@@ -53,6 +53,7 @@ import pandas as pd
 
 import ndat_filter
 import plot_style
+import project_paths
 
 
 # ======================================================================
@@ -182,7 +183,7 @@ def resolve_station_daypart_csv(
     an explicit parameter here (unlike 3.2/4.2 before their own fix), so
     only ndat_mode is new.
     """
-    index_dir = Path("results") / station / str(year) / "5_daypart_variability" / value_col
+    index_dir = project_paths.RESULTS_ROOT / station / str(year) / "5_daypart_variability" / value_col
 
     if ndat_mode is None:
         ndat_dir = index_dir
@@ -205,7 +206,7 @@ def resolve_station_coverage_csv(
     cross-check described in the module docstring.
     """
     return (
-        Path("results") / station / str(year) / "1_completeness"
+        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
         / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
     )
 
@@ -234,7 +235,7 @@ def resolve_comparison_paths(
     this branch - same mechanism already validated in 2.2/3.2/4.2's
     resolve_comparison_paths().
     """
-    base_dir = Path("results") / "global" / str(year) / "5_daypart_comparison"
+    base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "5_daypart_comparison"
 
     if ndat_mode is None:
         comparison_dir = base_dir

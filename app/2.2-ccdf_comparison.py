@@ -46,6 +46,7 @@ import pandas as pd
 
 import ndat_filter
 import plot_style
+import project_paths
 
 
 # ======================================================================
@@ -178,7 +179,7 @@ def resolve_station_pcts_csv(
     (ndat_config["file_tag"]) - same mechanism 2-ccdf.py's resolve_paths()
     already uses.
     """
-    index_dir = Path("results") / station / str(year) / "2_ccdf" / value_col
+    index_dir = project_paths.RESULTS_ROOT / station / str(year) / "2_ccdf" / value_col
 
     if ndat_mode is None:
         ndat_dir = index_dir
@@ -203,7 +204,7 @@ def resolve_station_coverage_csv(
     guarantee) - not read for its contents anywhere in this script.
     """
     return (
-        Path("results") / station / str(year) / "1_completeness"
+        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
         / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
     )
 
@@ -223,7 +224,7 @@ def resolve_comparison_paths(
     branch - the legacy branch above is untouched, so this is additive,
     not a restructuring of the existing path.
     """
-    base_dir = Path("results") / "global" / str(year) / "2_ccdf_comparison"
+    base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "2_ccdf_comparison"
 
     if ndat_mode is None:
         comparison_dir = base_dir

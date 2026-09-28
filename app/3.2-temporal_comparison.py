@@ -52,6 +52,7 @@ import pandas as pd
 
 import ndat_filter
 import plot_style
+import project_paths
 
 
 # ======================================================================
@@ -172,7 +173,7 @@ def resolve_station_thresholds_csv(
     directly, a pre-existing deviation from CLAUDE.md section 11 unrelated
     to Ndat, fixed here since this signature is already being touched).
     """
-    index_dir = Path("results") / station / str(year) / "3_temporal_variability" / value_col
+    index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
 
     if ndat_mode is None:
         ndat_dir = index_dir
@@ -200,7 +201,7 @@ def resolve_station_daily_csv(
     - same logic as resolve_station_thresholds_csv() above, only the
     output filename differs.
     """
-    index_dir = Path("results") / station / str(year) / "3_temporal_variability" / value_col
+    index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
 
     if ndat_mode is None:
         ndat_dir = index_dir
@@ -239,7 +240,7 @@ def resolve_comparison_paths(
     branch - same mechanism already validated in
     2.2-ccdf_comparison.py::resolve_comparison_paths().
     """
-    base_dir = Path("results") / "global" / str(year) / "3_temporal_comparison"
+    base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "3_temporal_comparison"
 
     if ndat_mode is None:
         comparison_dir = base_dir
