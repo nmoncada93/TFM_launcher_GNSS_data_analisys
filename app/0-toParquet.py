@@ -142,6 +142,29 @@ RAW_COLS = [
 # [C] READING FUNCTIONS
 # ======================================================================
 
+# Accepted variants of a daily RAW file name, in priority order. All of
+# them hold the same 12-column text; ".gz" ones are read compressed by
+# pd.read_csv itself (compression is inferred from the name, no temporary
+# file). Appended to the base name as strings on purpose: Path.with_suffix()
+# would treat ".2024001" in "rotiS4.2024001" as the suffix and replace it.
+RAW_CANDIDATE_SUFFIXES = ("", ".gz", ".tmp", ".tmp.gz")
+
+
+def resolve_raw_file(data_dir: Path, base_name: str) -> tuple[Path, list[Path]]:
+    """
+    Daily RAW file to read for `base_name` (e.g. "rotiS4.2024001"): the first
+    existing variant in RAW_CANDIDATE_SUFFIXES order, plus every variant
+    found. When none exists the plain name is returned, so the day keeps
+    being reported as "missing_file" exactly as before.
+    """
+    found = [
+        data_dir / f"{base_name}{suffix}"
+        for suffix in RAW_CANDIDATE_SUFFIXES
+        if (data_dir / f"{base_name}{suffix}").exists()
+    ]
+    return (found[0] if found else data_dir / base_name), found
+
+
 def read_raw_day(file_path: Path) -> tuple[pd.DataFrame | None, str]:
     """
     Read one daily RAW file (all stations mixed together).
@@ -374,7 +397,11 @@ def main() -> None:
     warned_stations: set = set()
 
     for doy in range(DOY_START, DOY_END + 1):
-        file_path = DATA_DIR / f"{file_prefix}{doy:03d}"
+        file_path, candidates = resolve_raw_file(DATA_DIR, f"{file_prefix}{doy:03d}")
+        if len(candidates) > 1:
+            ignored = ", ".join(p.name for p in candidates[1:])
+            print(f"WARNING: DoY {doy:03d}: several RAW files found - "
+                  f"using {file_path.name}, ignoring {ignored}")
         raw_df, note = read_raw_day(file_path)
 
         inventory_rows.append({

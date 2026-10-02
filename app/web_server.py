@@ -655,6 +655,35 @@ class Handler(BaseHTTPRequestHandler):
 
             summary = step1.compute_completeness_summary(df_results, year)
 
+            # Optional Ndat-impact DIAGNOSTIC, after the official outputs.
+            # Only adds its own files and an extra "ndat_impact" key - the
+            # rest of the response and the valid/invalid status are the
+            # same with or without it. Unknown/missing ndat_mode -> ValueError -> 400.
+            extra = {}
+            if params.get("ndat_impact"):
+                ndat_mode = str(params.get("ndat_mode"))
+                df_impact, impact = step1.run_ndat_impact(
+                    df_results, station, year, doy_start, doy_end, th_cov, ndat_mode,
+                )
+                impact_paths = step1.resolve_ndat_impact_paths(
+                    station, year, doy_start, doy_end, th_cov, ndat_mode,
+                )
+                impact_paths["diag_dir"].mkdir(parents=True, exist_ok=True)
+                step1.save_results_csv(df_impact, impact_paths["output_csv"])
+                step1.create_ndat_impact_plot(
+                    df_impact,
+                    th_cov=th_cov,
+                    plot_title=f"Ndat impact on daily coverage - Station {station} ({year})",
+                    ndat_label=impact["ndat_label"],
+                    output_png=impact_paths["output_png"],
+                    show_plot=False,
+                )
+                extra["ndat_impact"] = {
+                    **impact,
+                    "csv_url": f"/results/{impact_paths['output_csv'].relative_to(RESULTS_ROOT).as_posix()}",
+                    "plot_url": f"/results/{impact_paths['output_png'].relative_to(RESULTS_ROOT).as_posix()}",
+                }
+
             self._send_json(200, {
                 "ok": True,
                 "station": station,
@@ -663,6 +692,7 @@ class Handler(BaseHTTPRequestHandler):
                 "csv_url": f"/results/{paths['output_csv'].relative_to(RESULTS_ROOT).as_posix()}",
                 "plot_url": f"/results/{paths['output_png'].relative_to(RESULTS_ROOT).as_posix()}",
                 **summary,
+                **extra,
             })
         except FileNotFoundError as exc:
             self._send_json(404, {"ok": False, "error": str(exc)})

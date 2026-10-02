@@ -16,9 +16,11 @@ elevation/plausibility filters that are separate, still-undecided QC
 criteria - CLAUDE.md section 9, qc-open-decisions.md memory) - works
 directly off 08_ndat_roti_l1 instead, for all four modes alike.
 
-Step 0 and Step 1 do not use this module: Step 0 keeps every observation
-unfiltered, and Step 1 measures temporal availability, independent of
-Ndat (CLAUDE.md section 7-8).
+Step 0 and Step 1 do not use this module to select data: Step 0 keeps every
+observation unfiltered, and Step 1 measures temporal availability,
+independent of Ndat (CLAUDE.md section 7-8). Step 1 only calls it for its
+optional, informative Ndat-impact diagnostic (run_ndat_impact), which never
+changes the valid/invalid status.
 """
 
 import pandas as pd

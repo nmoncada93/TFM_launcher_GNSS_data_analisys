@@ -533,6 +533,13 @@
       table.summary tbody tr:last-child td {
         border-bottom: 0;
       }
+      table.summary caption {
+        caption-side: top;
+        text-align: left;
+        padding-bottom: var(--s2);
+        font-size: var(--t-xs);
+        color: var(--ink-2);
+      }
       .table-scroll {
         overflow-x: auto;
         margin: var(--s4) 0;
@@ -690,11 +697,13 @@
    Small parts
    ================================================================== */
       .month-picker,
-      .station-filter {
+      .station-filter,
+      .option-toggle {
         margin: var(--s3) 0;
       }
       .month-picker label,
-      .station-filter label {
+      .station-filter label,
+      .option-toggle label {
         display: inline-flex;
         align-items: center;
         width: auto;
@@ -704,7 +713,8 @@
         cursor: pointer;
       }
       .month-picker input,
-      .station-filter input {
+      .station-filter input,
+      .option-toggle input {
         width: auto;
         height: auto;
         margin-top: 0;
@@ -1010,7 +1020,8 @@
       <strong>Step 0 runs first</strong> and builds the Parquet files every
       other step reads. Steps 1-6 are connected. The
       <strong>Ndat criterion</strong> in the bar above applies to Steps 2-6;
-      Step 1 completeness is independent of Ndat.
+      Step 1 completeness (valid/invalid days) is independent of Ndat - Step 1
+      only uses it for its optional, informative Ndat-impact diagnostic.
     </p>
 
     <section id="step0">
@@ -1042,7 +1053,8 @@
         </div>
         <p class="field-note">
           The folder holding the daily RAW files (<code>rotiS4.2024001</code>
-          ... <code>rotiS4.2024366</code>). Relative paths resolve against the
+          ... <code>rotiS4.2024366</code>, also accepted as <code>.gz</code>,
+          <code>.tmp</code> or <code>.tmp.gz</code>). Relative paths resolve against the
           folder the server was started from; an absolute path
           (<code>D:\data\datos_2024</code>) also works.
         </p>
@@ -1129,6 +1141,17 @@
           <input id="step1-th-cov" type="number" step="0.01" value="0.75" />
         </label>
       </div>
+      <div class="option-toggle">
+        <label
+          ><input type="checkbox" id="step1-ndat-impact" /> Show Ndat impact on
+          completeness</label
+        >
+        <p class="field-note">
+          Uses the <strong>Ndat criterion</strong> selected in the top bar.
+          Diagnostic only: Step 1 valid days and the days used by Steps 2-6 are
+          unchanged.
+        </p>
+      </div>
       <div class="actions">
         <button onclick="runStep1()">Run</button>
         <button class="clear-btn" onclick="clearStep(1)">
@@ -1153,6 +1176,26 @@
         <tbody id="step1-summary-body"></tbody>
       </table>
       <div id="step1-explanation"></div>
+      <table class="summary" id="step1-ndat-summary">
+        <caption>
+          Ndat impact on completeness (<span id="step1-ndat-params"></span>).
+          Informative only: it does not change the valid days above or the
+          days used by Steps 2-6. Observations and minutes refer to the valid
+          days; annual coverage to every DoY.
+        </caption>
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Observations discarded [%]</th>
+            <th>Temporal minutes lost [%]</th>
+            <th>Valid days</th>
+            <th id="step1-ndat-col-valid-after">Valid days after Ndat</th>
+            <th id="step1-ndat-col-below">Days below threshold after Ndat</th>
+            <th>Annual temporal coverage before &rarr; after Ndat</th>
+          </tr>
+        </thead>
+        <tbody id="step1-ndat-summary-body"></tbody>
+      </table>
       <div id="step1-downloads" class="downloads-box"></div>
 
       <div id="step1-grid" class="grid-results"></div>
@@ -1918,6 +1961,7 @@
           "step1-grid",
           "step1-summary-body",
           "step1-explanation",
+          "step1-ndat-summary-body",
           "step1-downloads",
         ],
         2: [
@@ -1940,8 +1984,9 @@
 
       // Single source of truth for the Ndat criterion selected in "General
       // Analysis Configuration" - reads the DOM only, no scientific logic.
-      // Used by every Steps 2-6 run function/comparator below; Step 1 never
-      // calls this, since completeness is independent of Ndat.
+      // Used by every Steps 2-6 run function/comparator below. Step 1 calls
+      // it only for its optional Ndat-impact diagnostic - its valid/invalid
+      // status is independent of Ndat.
       function getNdatMode() {
         return document.getElementById("ndat-mode").value;
       }
@@ -2011,6 +2056,57 @@
           `<td>${data.overall_coverage_pct}%</td>` +
           `<td>${invalidSplit}</td><td>${streak}</td>` +
           `<td>${best}</td><td>${worst}</td>`;
+      }
+
+      // Optional Step 1 Ndat-impact DIAGNOSTIC row - same find-or-create-by-
+      // station pattern as upsertSummaryRow(). Presentation only: every
+      // number comes from run_ndat_impact() in 1-completitud.py, with its two
+      // scopes kept apart (filter_on_valid_days / completeness_all_doys).
+      // The table has one header for all rows, built from this run's Ndat
+      // criterion and threshold, so rows from other parameters are dropped.
+      function upsertNdatImpactRow(tbodyId, station, impact) {
+        const tbody = document.getElementById(tbodyId);
+        const params = `${impact.ndat_mode}|${impact.th_cov}`;
+        tbody.querySelectorAll("tr").forEach((r) => {
+          if (r.dataset.params !== params) r.remove();
+        });
+        let row = tbody.querySelector(`[data-station="${station}"]`);
+        if (!row) {
+          row = document.createElement("tr");
+          row.dataset.station = station;
+          tbody.appendChild(row);
+        }
+        row.dataset.params = params;
+
+        const ndat = impact.ndat_label.replace(" = ", "="); // "Ndat = 60" -> "Ndat=60"
+        const th = Number((impact.th_cov * 100).toFixed(2)); // 0.75 -> 75
+        document.getElementById("step1-ndat-params").textContent =
+          `${ndat}, coverage threshold ${th}%`;
+        document.getElementById("step1-ndat-col-valid-after").textContent =
+          `Valid days after ${ndat}`;
+        document.getElementById("step1-ndat-col-below").textContent =
+          `Days below ${th}% after Ndat`;
+
+        const f = impact.filter_on_valid_days;
+        const c = impact.completeness_all_doys;
+        const pct = (x) => `${Number(x).toFixed(2)}%`;
+        row.innerHTML =
+          `<td>${station}</td>` +
+          `<td>${pct(f.pct_obs_discarded)}</td>` +
+          `<td>${pct(f.pct_station_minutes_lost)}</td>` +
+          `<td>${c.n_valid_days_baseline}</td>` +
+          `<td>${c.n_days_above_th_after_ndat}</td>` +
+          `<td>${c.n_valid_days_below_th_after_ndat}</td>` +
+          `<td>${pct(c.overall_coverage_baseline_pct)} &rarr; ${pct(c.overall_coverage_after_ndat_pct)}</td>`;
+      }
+
+      // A run without the checkbox drops that station's diagnostic row, so the
+      // table never shows figures from a different set of parameters.
+      function removeNdatImpactRow(tbodyId, station) {
+        const row = document
+          .getElementById(tbodyId)
+          .querySelector(`[data-station="${station}"]`);
+        if (row) row.remove();
       }
 
       // Same find-or-create-by-station pattern as upsertSummaryRow(), kept
@@ -2211,25 +2307,46 @@
           doy_end: parseInt(document.getElementById("step1-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step1-th-cov").value),
         };
+        // Optional diagnostic: only sent when the checkbox is on, so a plain
+        // run sends exactly the same request as before.
+        if (document.getElementById("step1-ndat-impact").checked) {
+          payload.ndat_impact = true;
+          payload.ndat_mode = getNdatMode();
+        }
         const cardKey = [
           payload.station,
           payload.year,
           payload.doy_start,
           payload.doy_end,
           payload.th_cov,
+          ...(payload.ndat_impact ? [`ndat:${payload.ndat_mode}`] : []),
         ].join("|");
         runStep("/api/run/step1", payload, "step1-grid", cardKey, (data) => {
+          const impact = data.ndat_impact;
           upsertSummaryRow("step1-summary-body", payload.station, data);
           updateStep1Explanation(data.th_cov);
+          if (impact) {
+            upsertNdatImpactRow("step1-ndat-summary-body", payload.station, impact);
+          } else {
+            removeNdatImpactRow("step1-ndat-summary-body", payload.station);
+          }
           upsertDownloadLine(
             "step1-downloads",
             payload.station,
             `${data.station} (${data.year})`,
-            `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
+            `<a href="${data.csv_url}" target="_blank">Download CSV</a>` +
+              (impact
+                ? ` <a href="${impact.csv_url}" target="_blank">Ndat impact CSV (diagnostic)</a>`
+                : ""),
           );
           return (
-            `<h3>${data.station} (${data.year})</h3>` +
-            `<img src="${data.plot_url}?t=${Date.now()}" alt="Coverage plot">`
+            `<h3>${data.station} (${data.year})` +
+            (impact ? ` - Ndat impact: ${impact.ndat_label}` : "") +
+            `</h3>` +
+            `<img src="${data.plot_url}?t=${Date.now()}" alt="Coverage plot">` +
+            (impact
+              ? `<img src="${impact.plot_url}?t=${Date.now()}" alt="Ndat impact on daily coverage (diagnostic)">`
+              : "")
           );
         });
       }

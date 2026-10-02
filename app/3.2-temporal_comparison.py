@@ -449,7 +449,7 @@ def save_comparison_outputs(
 # ======================================================================
 # [F] OUTPUT - COMBINED PLOT (PNG)
 # ======================================================================
-@plot_style.with_font_sizes
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(4))
 def save_daily_comparison_plot(
     stations: list[str],
     daily_by_station: dict,
@@ -482,7 +482,8 @@ def save_daily_comparison_plot(
     ax.set_xlim(doy_start, doy_end)
     ax.set_ylim(bottom=0)
     ax.set_xlabel("Day of year (DoY)")
-    ax.set_ylabel("Frequency at/above own annual p99 [% of observations]")
+    # Two lines: at this font size the one-line label is taller than the axes.
+    ax.set_ylabel("Frequency at/above own annual p99\n[% of observations]")
     ax.set_title(f"Daily p99 exceedance frequency - station comparison — {label}")
     ax.grid(True, alpha=0.3)
     ax.legend()

@@ -479,7 +479,7 @@ def validate_results(
 # [G] PLOT
 # ======================================================================
 
-@plot_style.with_font_sizes
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(2))
 def save_hourly_plot(
     hourly: pd.DataFrame,
     p_high: float,

@@ -464,7 +464,7 @@ def save_ccdf_plot(
     plt.close()
 
 
-@plot_style.with_font_sizes
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(1))
 def save_multi_ccdf_plot(
     ccdf_by_month: dict,
     pcts_by_month: dict,

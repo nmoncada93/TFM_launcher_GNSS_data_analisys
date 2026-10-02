@@ -11,6 +11,11 @@ Usable two ways:
      run_completeness(station=..., year=..., th_cov=...) directly. The
      globals below are only the *defaults* used by the console mode; the
      scientific calculation itself does not depend on them.
+
+Optional DIAGNOSTIC (section [D.2], off by default): how much a Ndat
+criterion would reduce each day's coverage. Informative only - the valid/
+invalid status is always the one computed WITHOUT Ndat, and the official
+CSV/PNG and the days used by Steps 2-6 never change.
 """
 
 import calendar
@@ -20,6 +25,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import ndat_filter
 import plot_style
 import project_paths
 
@@ -40,6 +46,12 @@ TH_COV = 0.75
 # [A.3] Console-mode plot behaviour. A future server should not pop a
 # blocking matplotlib window on every run, so this stays a simple switch.
 SHOW_PLOT = True
+
+# [A.4] Optional DIAGNOSTIC: impact of a Ndat criterion on completeness
+# (section [D.2]). Informative only - never changes the official outputs
+# or the valid/invalid status. False = console run exactly as before.
+SHOW_NDAT_IMPACT = False
+NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE  # only read when SHOW_NDAT_IMPACT is True
 
 PLOT_TITLE = f"Daily data coverage — Station {STATION} ({YEAR})"
 
@@ -84,6 +96,27 @@ def resolve_paths(station: str, year: int, doy_start: int, doy_end: int, th_cov:
         "results_dir": results_dir,
         "output_csv": results_dir / f"coverage_{output_tag}.csv",
         "output_png": results_dir / f"coverage_plot_{output_tag}.png",
+    }
+
+
+def resolve_ndat_impact_paths(
+    station: str, year: int, doy_start: int, doy_end: int, th_cov: float, ndat_mode: str,
+) -> dict:
+    """
+    Output paths of the optional Ndat-impact DIAGNOSTIC (section [D.2]).
+    Own subfolder and own file names under 1_completeness/, so they can
+    never overwrite - or be read instead of - the official coverage CSV,
+    which Steps 2-6 locate by its exact name.
+    """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    results_dir = resolve_paths(station, year, doy_start, doy_end, th_cov)["results_dir"]
+    diag_dir = results_dir / "ndat_impact" / ndat_config["dir_tag"]
+    tag = f"{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}_{ndat_config['file_tag']}"
+
+    return {
+        "diag_dir": diag_dir,
+        "output_csv": diag_dir / f"ndat_impact_{tag}.csv",
+        "output_png": diag_dir / f"ndat_impact_plot_{tag}.png",
     }
 
 
@@ -197,6 +230,118 @@ def run_completeness(
         })
 
     return pd.DataFrame(results).sort_values("DoY").reset_index(drop=True)
+
+
+# ======================================================================
+# [D.2] DIAGNOSTIC: NDAT IMPACT ON COMPLETENESS (does not affect status)
+# ======================================================================
+def run_ndat_impact(
+    df_results: pd.DataFrame,
+    station: str,
+    year: int,
+    doy_start: int,
+    doy_end: int,
+    th_cov: float,
+    ndat_mode: str,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Informative only: how much the given Ndat criterion reduces each day's
+    coverage. The official valid/invalid status (computed WITHOUT Ndat by
+    run_completeness(), passed in as df_results) is copied as-is, never
+    recomputed - Steps 2-6 keep using exactly those days.
+
+      Parquet -> ndat_filter.apply_ndat_filter() -> unique minutes/day
+              -> coverage_after_ndat = n_minutes_after_ndat / 1440
+
+    Pure function: reads the parquet, returns (df_impact, summary); no
+    prints, no file writes.
+
+    df_impact has one row per DoY of the range: the official
+    DoY/n_minutes/coverage/status plus observation counts and the
+    post-Ndat minutes/coverage. The summary keeps its two scopes apart:
+      - filter_on_valid_days: observations and station-minutes on the
+        Step 1 valid days only - the data that actually enters Steps 2-6;
+      - completeness_all_doys: baseline vs post-Ndat coverage over every
+        DoY of the range. The filter only removes rows, so no invalid day
+        can reach th_cov after it: the days that stay >= th_cov are always
+        a subset of the valid ones.
+    Both are sums over rows of df_impact, so the CSV reproduces them.
+    """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    paths = resolve_paths(station, year, doy_start, doy_end, th_cov)
+    df = pd.read_parquet(
+        paths["parquet_path"],
+        columns=PARQUET_COLUMNS + [ndat_filter.NDAT_PARQUET_COLUMN],
+    )
+    df["minute"] = (df["01_sec_of_day"] // 60).astype(int)  # same definition as run_completeness()
+    doys = df_results["DoY"].to_numpy()
+
+    def per_doy(frame: pd.DataFrame):
+        by_doy = frame.groupby("14_doy_utc")
+        n_obs = by_doy.size().reindex(doys, fill_value=0).to_numpy()
+        n_minutes = by_doy["minute"].nunique().reindex(doys, fill_value=0).to_numpy()
+        return n_obs, n_minutes
+
+    n_obs, n_minutes_before = per_doy(df)
+    # Guard: the unfiltered minute count must be exactly the official one,
+    # or the two definitions have drifted apart and the comparison is void.
+    if not (n_minutes_before == df_results["n_minutes"].to_numpy()).all():
+        raise RuntimeError(
+            "Ndat-impact diagnostic: unfiltered unique minutes do not match "
+            "run_completeness() - the minute definitions have diverged."
+        )
+    n_obs_retained, n_minutes_after = per_doy(ndat_filter.apply_ndat_filter(df, ndat_mode))
+
+    df_impact = df_results[["DoY", "n_minutes", "coverage", "status"]].copy()
+    df_impact["n_obs"] = n_obs
+    df_impact["n_obs_retained"] = n_obs_retained
+    df_impact["n_obs_discarded"] = n_obs - n_obs_retained
+    df_impact["n_minutes_after_ndat"] = n_minutes_after
+    df_impact["coverage_after_ndat"] = n_minutes_after / 1440.0
+    df_impact["coverage_loss_pp"] = 100.0 * (df_impact["coverage"] - df_impact["coverage_after_ndat"])
+    df_impact["above_th_after_ndat"] = df_impact["coverage_after_ndat"] >= th_cov
+
+    valid = df_impact[df_impact["status"] == "valid"]
+    below = valid[~valid["above_th_after_ndat"]]
+    n_obs_valid = int(valid["n_obs"].sum())
+    n_kept_valid = int(valid["n_obs_retained"].sum())
+    minutes_before = int(valid["n_minutes"].sum())
+    minutes_after = int(valid["n_minutes_after_ndat"].sum())
+    n_doys = len(df_impact)
+    overall_before = 100.0 * float(df_impact["n_minutes"].sum()) / (n_doys * 1440) if n_doys else 0.0
+    overall_after = 100.0 * float(df_impact["n_minutes_after_ndat"].sum()) / (n_doys * 1440) if n_doys else 0.0
+
+    summary = {
+        "ndat_mode": ndat_mode,
+        "ndat_label": ndat_config["label"],
+        "th_cov": th_cov,
+        "filter_on_valid_days": {
+            "n_valid_days": len(valid),
+            "n_obs": n_obs_valid,
+            "n_obs_retained": n_kept_valid,
+            "n_obs_discarded": n_obs_valid - n_kept_valid,
+            "pct_obs_discarded": (
+                round(100.0 * (n_obs_valid - n_kept_valid) / n_obs_valid, 2) if n_obs_valid else 0.0
+            ),
+            "station_minutes_before": minutes_before,
+            "station_minutes_after": minutes_after,
+            "station_minutes_lost": minutes_before - minutes_after,
+            "pct_station_minutes_lost": (
+                round(100.0 * (minutes_before - minutes_after) / minutes_before, 2) if minutes_before else 0.0
+            ),
+        },
+        "completeness_all_doys": {
+            "n_doys": n_doys,
+            "n_valid_days_baseline": len(valid),
+            "n_days_above_th_after_ndat": int(df_impact["above_th_after_ndat"].sum()),
+            "n_valid_days_below_th_after_ndat": len(below),
+            "doys_below_th_after_ndat": [int(d) for d in below["DoY"]],
+            "overall_coverage_baseline_pct": round(overall_before, 2),
+            "overall_coverage_after_ndat_pct": round(overall_after, 2),
+            "overall_coverage_loss_pp": round(overall_before - overall_after, 2),
+        },
+    }
+    return df_impact, summary
 
 
 # ======================================================================
@@ -372,7 +517,7 @@ def save_results_csv(df_results: pd.DataFrame, output_csv: Path) -> None:
     print(f"\nResults saved to {output_csv}")
 
 
-@plot_style.with_font_sizes
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(3))
 def create_coverage_plot(
     df_results: pd.DataFrame,
     th_cov: float,
@@ -412,8 +557,9 @@ def create_coverage_plot(
     plt.title(plot_title)
     plt.grid(True, alpha=0.3)
 
-    # Legend inside the plot
-    plt.legend(loc="upper right")
+    # Legend inside the plot, centre-right: clear of the top band where
+    # the daily coverage usually lies
+    plt.legend(loc="center right")
 
     # Footer text - deliberately not "Annual valid days (coverage >= X)":
     # th_cov is a per-day threshold, annual_valid_pct is the share of days
@@ -431,10 +577,12 @@ def create_coverage_plot(
         0.5, 0.01,
         footer_text,
         ha="center",
-        fontsize=plot_style.FONT_SIZES["text"]
+        fontsize=plt.rcParams["font.size"]
     )
 
-    plt.tight_layout()
+    # Bottom band reserved for the footer figtext, which tight_layout()
+    # ignores - otherwise it touches the x-axis label.
+    plt.tight_layout(rect=(0, 0.06, 1, 1))
 
     # Always save (traceability)
     plt.savefig(output_png, dpi=200)
@@ -447,6 +595,90 @@ def create_coverage_plot(
             print(f"(INFO) Could not open plot window: {e}")
 
     plt.close()
+
+
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(3))
+def create_ndat_impact_plot(
+    df_impact: pd.DataFrame,
+    th_cov: float,
+    plot_title: str,
+    ndat_label: str,
+    output_png: Path,
+    show_plot: bool = True,
+) -> None:
+    """
+    DIAGNOSTIC plot, separate from the official one (create_coverage_plot
+    is untouched): daily coverage without and with the Ndat criterion,
+    same th_cov line. The footer counts are the official valid days and
+    how many of them would stay >= th_cov after the filter. Labels only -
+    the plotted values are df_impact's, unchanged.
+    """
+    is_valid = df_impact["status"] == "valid"
+    n_valid = int(is_valid.sum())
+    n_kept = int((is_valid & df_impact["above_th_after_ndat"]).sum())
+    th_label = f"{th_cov * 100:g}%"  # 0.75 -> "75%", 0.7 -> "70%"
+    ndat_short = ndat_label.replace(" = ", "=")  # "Ndat = 60" -> "Ndat=60"
+
+    plt.figure(figsize=(10, 5))
+
+    plt.plot(df_impact["DoY"], df_impact["coverage"], linestyle="-", label="Original daily coverage")
+    plt.plot(
+        df_impact["DoY"],
+        df_impact["coverage_after_ndat"],
+        linestyle="-",
+        label=f"Daily coverage after {ndat_label}",
+    )
+    plt.axhline(y=th_cov, linestyle="--", linewidth=1, label=f"Coverage threshold ({th_label})")
+
+    plt.xlabel("Day of Year (DoY)")
+    plt.ylabel("Daily coverage (n_minutes / 1440)")
+    plt.title(plot_title)
+    plt.grid(True, alpha=0.3)
+    # "best", not the official plot's "upper right": with three entries the
+    # legend would cover the top band where both coverage series lie.
+    plt.legend(loc="best")
+
+    footer_text = f"Valid days before Ndat: {n_valid} — Valid days after {ndat_short}: {n_kept}"
+    plt.figtext(0.5, 0.01, footer_text, ha="center", fontsize=plt.rcParams["font.size"])
+
+    # Bottom band reserved for the footer figtext, which tight_layout()
+    # ignores - otherwise it touches the x-axis label.
+    plt.tight_layout(rect=(0, 0.06, 1, 1))
+    plt.savefig(output_png, dpi=200)
+    print(f"Ndat-impact plot saved to {output_png}")
+
+    if show_plot:
+        try:
+            plt.show()
+        except Exception as e:
+            print(f"(INFO) Could not open plot window: {e}")
+
+    plt.close()
+
+
+def print_ndat_impact_summary(summary: dict) -> None:
+    """
+    Console report of run_ndat_impact()'s summary, with the same wording as
+    the web table and the diagnostic plot. Observations and minutes refer
+    to the valid days; annual coverage to every DoY.
+    """
+    f = summary["filter_on_valid_days"]
+    c = summary["completeness_all_doys"]
+    ndat = summary["ndat_label"].replace(" = ", "=")  # "Ndat = 60" -> "Ndat=60"
+    th = f"{summary['th_cov'] * 100:g}%"  # 0.75 -> "75%"
+    rows = [
+        ("Observations discarded [%]", f"{f['pct_obs_discarded']:.2f}%"),
+        ("Temporal minutes lost [%]", f"{f['pct_station_minutes_lost']:.2f}%"),
+        ("Valid days before Ndat", c["n_valid_days_baseline"]),
+        (f"Valid days after {ndat}", c["n_days_above_th_after_ndat"]),
+        (f"Days below {th} after Ndat", c["n_valid_days_below_th_after_ndat"]),
+        ("Annual temporal coverage before -> after Ndat",
+         f"{c['overall_coverage_baseline_pct']:.2f}% -> {c['overall_coverage_after_ndat_pct']:.2f}%"),
+    ]
+    width = max(len(label) for label, _ in rows) + 1
+    print(f"\nNdat impact on completeness ({ndat}, coverage threshold {th}) - informative only")
+    for label, value in rows:
+        print(f"  {label + ':':<{width}} {value}")
 
 
 # ======================================================================
@@ -477,6 +709,25 @@ def main() -> None:
         output_png=paths["output_png"],
         show_plot=SHOW_PLOT,
     )
+
+    # Optional diagnostic - runs after the official outputs are written and
+    # only adds its own files under 1_completeness/ndat_impact/.
+    if SHOW_NDAT_IMPACT:
+        df_impact, impact = run_ndat_impact(
+            df_results, STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE,
+        )
+        impact_paths = resolve_ndat_impact_paths(STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE)
+        impact_paths["diag_dir"].mkdir(parents=True, exist_ok=True)
+        save_results_csv(df_impact, impact_paths["output_csv"])
+        create_ndat_impact_plot(
+            df_impact,
+            th_cov=TH_COV,
+            plot_title=f"Ndat impact on daily coverage - Station {STATION} ({YEAR})",
+            ndat_label=impact["ndat_label"],
+            output_png=impact_paths["output_png"],
+            show_plot=SHOW_PLOT,
+        )
+        print_ndat_impact_summary(impact)
 
 
 if __name__ == "__main__":

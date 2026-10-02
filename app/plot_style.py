@@ -6,7 +6,8 @@ Tamaños de letra de las figuras, en un solo sitio.
 
 Para probar otro tamaño: cambia un valor de FONT_SIZES (o de
 HEATMAP_FONT_SIZES para los heatmaps del Step 6) y vuelve a generar la
-figura. Solo afecta a la presentación: no cambia datos, cálculos, figsize,
+figura. Las figuras que usan font_sizes_plus(N) quedan N pt por encima
+de FONT_SIZES. Solo afecta a la presentación: no cambia datos, cálculos, figsize,
 layout, ticks, textos ni colores.
 """
 
@@ -26,12 +27,22 @@ FONT_SIZES = {
 
 # Heatmaps del Step 6: algo más grandes que el resto.
 HEATMAP_FONT_SIZES = {
-    "title": 14,
-    "axis_label": 13,
-    "tick_label": 13,
-    "legend": 13,
-    "text": 13,
+    "title": 19,
+    "axis_label": 18,
+    "tick_label": 18,
+    "legend": 18,
+    "text": 18,
 }
+
+
+def font_sizes_plus(points, base=None):
+    """
+    Copia de `base` (FONT_SIZES por defecto) con todos los tamaños `points`
+    pt mayores. Para figuras que se leen mejor algo más grandes, p. ej.
+    @with_font_sizes(sizes=font_sizes_plus(2)).
+    """
+    base = FONT_SIZES if base is None else base
+    return {key: size + points for key, size in base.items()}
 
 
 # Colores de reserva para estaciones sin color propio en el STATION_COLORS
