@@ -462,7 +462,7 @@ def doy_to_month(year: int, doy: int) -> int:
 # ======================================================================
 # [G] PLOT
 # ======================================================================
-@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(4))
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(7))
 def save_daily_frequency_plot(
     df_daily: pd.DataFrame,
     threshold_high: float,

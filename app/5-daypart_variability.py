@@ -602,7 +602,7 @@ def validate_daypart_results(
 # [H] PLOT
 # ======================================================================
 
-@plot_style.with_font_sizes
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(3))
 def save_daypart_plot(
     df_daypart: pd.DataFrame,
     out_png: Path,
@@ -664,7 +664,7 @@ def save_daypart_plot(
                 xytext=(0, 3),
                 textcoords="offset points",
                 ha="center",
-                fontsize=plot_style.FONT_SIZES["text"],
+                fontsize=plt.rcParams["font.size"],
             )
 
     max_frequency = float(

@@ -52,6 +52,9 @@ SHOW_PLOT = True
 # or the valid/invalid status. False = console run exactly as before.
 SHOW_NDAT_IMPACT = False
 NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE  # only read when SHOW_NDAT_IMPACT is True
+# Width of the band just below th_cov used to group the valid days by their
+# post-Ndat coverage (a fraction, like coverage: 0.05 = 5 percentage points).
+NDAT_COVERAGE_BAND = 0.05
 
 PLOT_TITLE = f"Daily data coverage — Station {STATION} ({YEAR})"
 
@@ -243,6 +246,7 @@ def run_ndat_impact(
     doy_end: int,
     th_cov: float,
     ndat_mode: str,
+    coverage_band: float = NDAT_COVERAGE_BAND,
 ) -> tuple[pd.DataFrame, dict]:
     """
     Informative only: how much the given Ndat criterion reduces each day's
@@ -264,8 +268,11 @@ def run_ndat_impact(
       - completeness_all_doys: baseline vs post-Ndat coverage over every
         DoY of the range. The filter only removes rows, so no invalid day
         can reach th_cov after it: the days that stay >= th_cov are always
-        a subset of the valid ones.
-    Both are sums over rows of df_impact, so the CSV reproduces them.
+        a subset of the valid ones;
+      - post_ndat_coverage_of_valid_days: the Step 1 valid days split by
+        coverage_after_ndat into three exclusive groups - >= th_cov,
+        [th_cov - coverage_band, th_cov) and < th_cov - coverage_band.
+    All are sums over rows of df_impact, so the CSV reproduces them.
     """
     ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
     paths = resolve_paths(station, year, doy_start, doy_end, th_cov)
@@ -340,8 +347,40 @@ def run_ndat_impact(
             "overall_coverage_after_ndat_pct": round(overall_after, 2),
             "overall_coverage_loss_pp": round(overall_before - overall_after, 2),
         },
+        "post_ndat_coverage_of_valid_days": _post_ndat_coverage_groups(valid, th_cov, coverage_band),
     }
     return df_impact, summary
+
+
+def _post_ndat_coverage_groups(valid: pd.DataFrame, th_cov: float, coverage_band: float) -> dict:
+    """
+    The official valid days (rows of df_impact with status == "valid")
+    split by coverage_after_ndat into three exclusive groups, reusing the
+    above_th_after_ndat column. Diagnostic only - the status is unchanged.
+    """
+    # Rounded so that e.g. 0.75 - 0.05 is exactly 0.70, the same float as
+    # 1008/1440: a day at exactly the lower bound falls in the band.
+    lower_bound = round(th_cov - coverage_band, 10)
+    above = valid["above_th_after_ndat"]
+    in_band = ~above & (valid["coverage_after_ndat"] >= lower_bound)
+    below_band = ~above & (valid["coverage_after_ndat"] < lower_bound)
+    groups = {
+        "threshold": th_cov,
+        "band": coverage_band,
+        "lower_bound": lower_bound,
+        "n_valid_days": len(valid),
+        "n_at_or_above_threshold": int(above.sum()),
+        "n_in_band_below_threshold": int(in_band.sum()),
+        "n_below_band": int(below_band.sum()),
+    }
+    # The three groups must cover every valid day exactly once.
+    if (groups["n_at_or_above_threshold"] + groups["n_in_band_below_threshold"]
+            + groups["n_below_band"] != groups["n_valid_days"]):
+        raise RuntimeError(
+            "Ndat-impact diagnostic: post-Ndat coverage groups do not add up "
+            "to the number of valid days."
+        )
+    return groups
 
 
 # ======================================================================
@@ -433,8 +472,13 @@ def compute_completeness_summary(df_results: pd.DataFrame, year: int) -> dict:
     Equivalent to coverage["coverage"].mean() * 100 given one row per
     DoY (guaranteed by run_completeness()), but computed from n_minutes
     directly so it stays traceable to the same formula regardless of how
-    the coverage column itself is derived. Not a validity threshold -
-    see the note built in updateThresholdNote() in the web UI.
+    the coverage column itself is derived. Not a validity threshold.
+    Shown in the web table as "Mean coverage over N days [%]".
+
+    mean_valid_day_coverage_pct is the same formula restricted to the
+    days with status == "valid" (= mean of their daily coverage), shown
+    as "Mean daily coverage of valid days [%]". None when no day is
+    valid - it is undefined, not 0.
     """
     n_total_days = int(len(df_results))
     n_valid_days = int((df_results["status"] == "valid").sum())
@@ -443,6 +487,12 @@ def compute_completeness_summary(df_results: pd.DataFrame, year: int) -> dict:
     overall_coverage_pct = (
         round(100.0 * float(df_results["n_minutes"].sum()) / (n_total_days * 1440), 2)
         if n_total_days else 0.0
+    )
+
+    valid_days = df_results[df_results["status"] == "valid"]
+    mean_valid_day_coverage_pct = (
+        round(100.0 * float(valid_days["n_minutes"].sum()) / (n_valid_days * 1440), 2)
+        if n_valid_days else None
     )
 
     invalid_days = df_results[df_results["status"] != "valid"]
@@ -499,6 +549,7 @@ def compute_completeness_summary(df_results: pd.DataFrame, year: int) -> dict:
         "n_invalid_days": n_invalid_days,
         "coverage_pct": coverage_pct,
         "overall_coverage_pct": overall_coverage_pct,
+        "mean_valid_day_coverage_pct": mean_valid_day_coverage_pct,
         "n_invalid_zero_min": n_invalid_zero_min,
         "n_invalid_partial": n_invalid_partial,
         "longest_invalid_streak": int(longest_invalid_streak),
@@ -674,6 +725,13 @@ def print_ndat_impact_summary(summary: dict) -> None:
         (f"Days below {th} after Ndat", c["n_valid_days_below_th_after_ndat"]),
         ("Annual temporal coverage before -> after Ndat",
          f"{c['overall_coverage_baseline_pct']:.2f}% -> {c['overall_coverage_after_ndat_pct']:.2f}%"),
+    ]
+    g = summary["post_ndat_coverage_of_valid_days"]
+    lo = f"{g['lower_bound'] * 100:g}%"  # th_cov - band, e.g. "70%"
+    rows += [
+        (f"Valid days >= {th} after Ndat", g["n_at_or_above_threshold"]),
+        (f"Valid days {lo} to < {th} after Ndat", g["n_in_band_below_threshold"]),
+        (f"Valid days < {lo} after Ndat", g["n_below_band"]),
     ]
     width = max(len(label) for label, _ in rows) + 1
     print(f"\nNdat impact on completeness ({ndat}, coverage threshold {th}) - informative only")

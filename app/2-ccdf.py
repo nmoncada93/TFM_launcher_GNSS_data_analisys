@@ -464,7 +464,7 @@ def save_ccdf_plot(
     plt.close()
 
 
-@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(1))
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(4))
 def save_multi_ccdf_plot(
     ccdf_by_month: dict,
     pcts_by_month: dict,
@@ -636,7 +636,7 @@ def save_cross_station_ccdf_plot(
     plt.close()
 
 
-@plot_style.with_font_sizes
+@plot_style.with_font_sizes(sizes=plot_style.font_sizes_plus(3))
 def save_monthly_percentiles_plot(
     df_pcts: pd.DataFrame,
     out_png: Path,
@@ -730,7 +730,9 @@ def save_monthly_percentiles_plot(
             xytext=(0, 10),
             textcoords="offset points",
             ha="center",
-            fontsize=plot_style.FONT_SIZES["text"]
+            fontsize=plt.rcParams["font.size"],
+            # light backing so a neighbouring line segment never runs through the label
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1.0),
         )
 
     months = list(range(1, 13))

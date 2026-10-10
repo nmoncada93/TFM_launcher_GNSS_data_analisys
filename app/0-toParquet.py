@@ -15,6 +15,7 @@ station is kept - the quality-flag columns let later scripts decide what to
 filter; nothing is removed here.
 """
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -142,27 +143,67 @@ RAW_COLS = [
 # [C] READING FUNCTIONS
 # ======================================================================
 
-# Accepted variants of a daily RAW file name, in priority order. All of
-# them hold the same 12-column text; ".gz" ones are read compressed by
-# pd.read_csv itself (compression is inferred from the name, no temporary
-# file). Appended to the base name as strings on purpose: Path.with_suffix()
-# would treat ".2024001" in "rotiS4.2024001" as the suffix and replace it.
+# Preferred daily RAW name: RAW_PREFERRED_PREFIX + YYYYDDD, e.g.
+# "rotiS4.2024001". Accepted variants, in priority order: all of them hold
+# the same 12-column text; ".gz" ones are read compressed by pd.read_csv
+# itself (compression is inferred from the name, no temporary file).
+# Appended to the base name as strings on purpose: Path.with_suffix() would
+# treat ".2024001" in "rotiS4.2024001" as the suffix and replace it.
+RAW_PREFERRED_PREFIX = "rotiS4."
 RAW_CANDIDATE_SUFFIXES = ("", ".gz", ".tmp", ".tmp.gz")
 
 
-def resolve_raw_file(data_dir: Path, base_name: str) -> tuple[Path, list[Path]]:
+class AmbiguousRawFileError(ValueError):
+    """More than one generically named RAW file found for the same day."""
+
+
+def is_generic_raw_name(name: str, day_id: str) -> bool:
     """
-    Daily RAW file to read for `base_name` (e.g. "rotiS4.2024001"): the first
-    existing variant in RAW_CANDIDATE_SUFFIXES order, plus every variant
-    found. When none exists the plain name is returned, so the day keeps
-    being reported as "missing_file" exactly as before.
+    True if `name` holds `day_id` (YYYYDDD) as a whole number - no digit
+    right before or after it, so "2025120" does not match "20251201" - and
+    is in one of the accepted formats: no extension, .gz, .tmp or .tmp.gz.
+    The rest of the name (prefix, separators) does not matter.
     """
+    core = name[:-3] if name.endswith(".gz") else name
+    core = core[:-4] if core.endswith(".tmp") else core
+    extension = Path(core).suffix
+    if extension and not extension[1:].isdigit():
+        return False  # .txt, .csv, .zip... - not a RAW format; ".2025120" is the date, not an extension
+    return re.search(rf"(?<!\d){day_id}(?!\d)", core) is not None
+
+
+def resolve_raw_file(data_dir: Path, year: int, doy: int) -> tuple[Path, list[Path]]:
+    """
+    Daily RAW file to read for `year`/`doy`, plus every candidate found.
+
+    1. Preferred name, RAW_PREFERRED_PREFIX + YYYYDDD: the first existing
+       variant in RAW_CANDIDATE_SUFFIXES order (several -> main() warns).
+    2. Only when none exists: any other file whose name holds YYYYDDD in an
+       accepted format (is_generic_raw_name), e.g. "roti.2025120.gz". If
+       more than one does, nothing is chosen: AmbiguousRawFileError.
+    When nothing matches the preferred plain name is returned, so the day
+    keeps being reported as "missing_file" exactly as before.
+    """
+    day_id = f"{year}{doy:03d}"
+    base = data_dir / f"{RAW_PREFERRED_PREFIX}{day_id}"
     found = [
-        data_dir / f"{base_name}{suffix}"
+        data_dir / f"{base.name}{suffix}"
         for suffix in RAW_CANDIDATE_SUFFIXES
-        if (data_dir / f"{base_name}{suffix}").exists()
+        if (data_dir / f"{base.name}{suffix}").exists()
     ]
-    return (found[0] if found else data_dir / base_name), found
+    if found:
+        return found[0], found
+
+    generic = sorted(
+        (p for p in data_dir.iterdir() if p.is_file() and is_generic_raw_name(p.name, day_id)),
+        key=lambda p: p.name,
+    ) if data_dir.is_dir() else []
+    if len(generic) > 1:
+        raise AmbiguousRawFileError(
+            f"DoY {doy:03d}: several RAW files contain {day_id} and none is "
+            f"{base.name}[.gz|.tmp|.tmp.gz]: {', '.join(p.name for p in generic)}"
+        )
+    return (generic[0] if generic else base), generic
 
 
 def read_raw_day(file_path: Path) -> tuple[pd.DataFrame | None, str]:
@@ -378,7 +419,20 @@ def validate_totals(df_summary: pd.DataFrame, df_inventory: pd.DataFrame) -> Non
 # ======================================================================
 
 def main() -> None:
-    file_prefix = f"rotiS4.{YEAR}"
+    # Locate every day's RAW file before reading any (and before creating
+    # any output folder): an ambiguous generic name stops the run here,
+    # listing every such day, instead of picking one of the files.
+    raw_files, ambiguous = {}, []
+    for doy in range(DOY_START, DOY_END + 1):
+        try:
+            raw_files[doy] = resolve_raw_file(DATA_DIR, YEAR, doy)
+        except AmbiguousRawFileError as exc:
+            ambiguous.append(str(exc))
+    if ambiguous:
+        raise AmbiguousRawFileError(
+            "Ambiguous RAW files - leave a single file per day:\n" + "\n".join(ambiguous)
+        )
+
     global_paths = resolve_global_paths(YEAR)
 
     print("Step 0 - RAW to Parquet conversion")
@@ -397,8 +451,8 @@ def main() -> None:
     warned_stations: set = set()
 
     for doy in range(DOY_START, DOY_END + 1):
-        file_path, candidates = resolve_raw_file(DATA_DIR, f"{file_prefix}{doy:03d}")
-        if len(candidates) > 1:
+        file_path, candidates = raw_files[doy]
+        if len(candidates) > 1:  # only the preferred name can get here with several
             ignored = ", ".join(p.name for p in candidates[1:])
             print(f"WARNING: DoY {doy:03d}: several RAW files found - "
                   f"using {file_path.name}, ignoring {ignored}")
