@@ -2,30 +2,26 @@
 # -*- coding: utf-8 -*-
 
 """
-Tamaños de letra de las figuras, en un solo sitio.
+Shared figure styling: font sizes and fallback station colours.
 
-Para probar otro tamaño: cambia un valor de FONT_SIZES (o de
-HEATMAP_FONT_SIZES para los heatmaps del Step 6) y vuelve a generar la
-figura. Las figuras que usan font_sizes_plus(N) quedan N pt por encima
-de FONT_SIZES. Solo afecta a la presentación: no cambia datos, cálculos, figsize,
-layout, ticks, textos ni colores.
+Presentation only - nothing here changes data, calculations or layout.
+Figures decorated with font_sizes_plus(N) use FONT_SIZES + N points.
 """
 
 from functools import wraps
 
 import matplotlib.pyplot as plt
 
-# Tamaños en puntos de Matplotlib (los valores por defecto de Matplotlib son
-# 12 para títulos y 10 para el resto).
+# Font sizes in points.
 FONT_SIZES = {
-    "title": 12,       # títulos
-    "axis_label": 11,  # nombres de los ejes y etiqueta de la colorbar
-    "tick_label": 11,  # números de los ejes y de la colorbar
-    "legend": 11,      # leyendas
-    "text": 11,        # anotaciones y pies de figura
+    "title": 12,
+    "axis_label": 11,  # axis labels and colorbar label
+    "tick_label": 11,  # axis and colorbar tick labels
+    "legend": 11,
+    "text": 11,        # annotations and figure footers
 }
 
-# Heatmaps del Step 6: algo más grandes que el resto.
+# Step 6 heatmaps.
 HEATMAP_FONT_SIZES = {
     "title": 19,
     "axis_label": 18,
@@ -36,26 +32,21 @@ HEATMAP_FONT_SIZES = {
 
 
 def font_sizes_plus(points, base=None):
-    """
-    Copia de `base` (FONT_SIZES por defecto) con todos los tamaños `points`
-    pt mayores. Para figuras que se leen mejor algo más grandes, p. ej.
-    @with_font_sizes(sizes=font_sizes_plus(2)).
-    """
+    """Copy of `base` (default FONT_SIZES) with every size increased by `points`."""
     base = FONT_SIZES if base is None else base
     return {key: size + points for key, size in base.items()}
 
 
-# Colores de reserva para estaciones sin color propio en el STATION_COLORS
-# de cada script (p. ej. una estación añadida a stations.json para la web).
-# Ninguno coincide con los de UNSA/KOUG/WHIT/YELL (naranja/azul/verde/rojo).
+# Colours for stations without an entry in a script's STATION_COLORS (e.g. a
+# station added to stations.json). None of them matches the four study stations.
 FALLBACK_STATION_COLORS = ["tab:purple", "tab:brown", "tab:pink", "tab:gray", "tab:olive", "tab:cyan"]
 
 
 def station_color(station, known_colors, stations):
     """
-    Color de `station` en una figura comparativa: el suyo en known_colors
-    (el STATION_COLORS del script) o, si no lo tiene, uno de reserva distinto
-    para cada estación sin color de la figura, asignado por orden alfabético.
+    Colour of `station` in a comparison figure: its entry in known_colors or,
+    failing that, a fallback colour assigned in alphabetical order among the
+    stations of the figure that have no entry.
     """
     if station in known_colors:
         return known_colors[station]
@@ -65,11 +56,9 @@ def station_color(station, known_colors, stations):
 
 def with_font_sizes(plot_function=None, *, sizes=None):
     """
-    Dibuja la figura con los tamaños de FONT_SIZES, o con los de `sizes` si
-    se indica (p. ej. @with_font_sizes(sizes=HEATMAP_FONT_SIZES)). Usa
-    plt.rc_context, que restaura la configuración al terminar, así que no
-    afecta a otras figuras ni a otros scripts cargados en el mismo proceso
-    (p. ej. web_server.py).
+    Decorator: draw the figure with FONT_SIZES, or with `sizes` if given.
+    plt.rc_context restores the settings afterwards, so other figures and
+    other scripts in the same process (e.g. web_server.py) are not affected.
     """
     def decorate(func):
         @wraps(func)

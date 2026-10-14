@@ -4,24 +4,19 @@
 """
 Step 5 - Daypart variability of threshold exceedances.
 
-Reads from the Step 0 Parquet, the Step 1 coverage CSV and the Step 3
-annual-thresholds CSV, following the same philosophy as Steps 1-4
-(CLAUDE.md section 11): global config as defaults, main() for console
-mode, import-safe.
+Inputs: the Step 0 Parquet, the Step 1 coverage CSV and the Step 3
+annual-thresholds CSV. Outputs under
+results/{STATION}/{YEAR}/5_daypart_variability/{INDEX}/. Globals in section
+[A] are console defaults; main() is the entry point (web_server.py runs it
+with patched globals).
 
-Reads row-level hour_local/value data directly from the Step 0 Parquet
-instead of the Step 4 "prepared" Parquet (which no longer exists - see
-Steps 3-4). Because the Step 0 Parquet contains all 366 days, not only
-the valid ones, this script now filters to the Step 1 valid days itself
-before computing anything - the previous version relied on that filtering
-having already happened upstream (in Step 3/4's now-removed prepared
-Parquet), so it never needed to do it here.
+Observations: those of the Step 1 valid days, then the Ndat criterion.
+Exceedances are counted against the station's own annual p90/p99 from
+Step 3. Dayparts are defined in fixed-offset local hours (DAYPARTS) and
+must cover the 24 hours exactly once.
 
 Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported() (CLAUDE.md section 3-bis).
-
-The daypart-frequency calculation and the plotting code are otherwise
-unchanged from the validated version.
+INDEX_CONFIG / validate_index_supported().
 """
 
 from pathlib import Path
@@ -44,20 +39,15 @@ YEAR = 2024
 DOY_START = 1
 DOY_END = 366
 
-# Índice a analizar. Solo "roti_l1" está científicamente
-# implementado/validado - ver INDEX_CONFIG.
+# Index to analyse. Only "roti_l1" is scientifically
+# implemented/validated - see INDEX_CONFIG.
 VALUE_COL = "roti_l1"
 
-# Criterio Ndat. IMPORTANTE: a diferencia de 2-ccdf.py / 3-temporal_variability.py,
-# aquí el default NO es ndat_filter.NDAT_DEFAULT_MODE ("eq60"). main() no tiene
-# función pura equivalente (CLAUDE.md sección 11, "adapt only") y web_server.py
-# llama a main() directamente vía _patched_globals sin parchear NDAT_MODE - si el
-# default fuera "eq60", la web empezaría a exigir/usar Ndat=60 sin que nadie lo
-# pidiera. NDAT_MODE=None aquí es una solución TEMPORAL de compatibilidad con la
-# web legacy, no el default científico del TFM - los outputs oficiales se generan
-# explícitamente con ndat_mode="eq60" (vía _patched_globals o edición manual de
-# esta variable). Revisar/eliminar esta excepción cuando la web se migre a un
-# selector de Ndat. Mismo criterio ya aplicado en 4-hourly_variability.py.
+# Ndat criterion. Console default None = no Ndat filter: outputs go to the
+# untagged folder, and the Step 3 thresholds are read from the untagged
+# folder too. This differs from Steps 2-3, whose default is "eq60". The web
+# interface passes the selected mode explicitly. The official results use
+# "eq60"; set NDAT_MODE = "eq60" to reproduce them from the console.
 NDAT_MODE = None
 
 TH_COV = 0.75
@@ -74,8 +64,7 @@ PERCENTILE_EXTREME = 99
 # midnight"), which does not need the cross-midnight case at all.
 #
 # The default configuration covers the full local day exactly once, as
-# 4 six-hour dayparts (requested by the thesis director, replacing the
-# previous 3 uneven dayparts - see pipeline-migration memory).
+# 4 six-hour dayparts.
 DAYPARTS = [
     {
         "name": "Night",
@@ -105,10 +94,10 @@ PLOT_DPI = 250
 
 
 # ======================================================================
-# [B] ÍNDICES: PARQUET <-> NOMBRE DE FICHERO <-> ETIQUETA CIENTÍFICA
+# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL
 # ======================================================================
-# Misma fuente única de verdad que en 2-ccdf.py / 3-temporal_variability.py
-# / 4-hourly_variability.py (CLAUDE.md sección 3-bis).
+# Same index definitions as in 2-ccdf.py / 3-temporal_variability.py
+# / 4-hourly_variability.py.
 INDEX_CONFIG = {
     "roti_l1": {
         "parquet_column": "06_roti_l1",
@@ -135,14 +124,14 @@ INDEX_CONFIG = {
         "parquet_column": "10_s4_l1",
         "file_tag": "S4L1",
         "label": "S4 L1",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
     "s4_l2": {
         "parquet_column": "11_s4_l2",
         "file_tag": "S4L2",
         "label": "S4 L2",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
 }
@@ -150,8 +139,9 @@ INDEX_CONFIG = {
 
 def validate_index_supported(value_col: str) -> dict:
     """
-    Comprueba que value_col tiene un análisis científico implementado y
-    validado - no solo que la columna exista en el Parquet.
+    Checks that value_col has an implemented and validated analysis - not
+    just that the column exists in the Parquet. Returns its INDEX_CONFIG
+    entry.
     """
     if value_col not in INDEX_CONFIG:
         raise ValueError(
@@ -171,7 +161,7 @@ def validate_index_supported(value_col: str) -> dict:
 
 
 # ======================================================================
-# [C] RESOLUCIÓN DE RUTAS
+# [C] PATH RESOLUTION
 # ======================================================================
 def resolve_paths(
     station: str,
@@ -184,16 +174,13 @@ def resolve_paths(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Resuelve rutas de entrada/salida a partir de los parámetros recibidos.
+    Input/output paths, computed from the arguments received.
 
-    ndat_mode=None (default) reproduce exactamente la ruta/prefix de antes de
-    que este script conociera Ndat, tanto para lo que escribe Step 5 como para
-    dónde busca el Step 3 del que depende - ningún caller existente que no
-    pase este argumento (hoy, web_server.py y main() con su default) ve ningún
-    cambio de ruta. Un modo real ("eq60"/"ge30"/"all"/"lt30") se aplica a la
-    vez a ambas resoluciones (lectura de Step 3 y escritura de Step 5) con el
-    mismo ndat_config - mismo mecanismo ya validado en
-    3-temporal_variability.py / 4-hourly_variability.py::resolve_paths().
+    The same ndat_mode selects both the Step 3 folder the thresholds are
+    read from and the Step 5 output folder, so thresholds of one Ndat
+    criterion are never combined with observations filtered by another.
+    ndat_mode=None: untagged folders and prefixes; a mode adds its
+    dir_tag subfolder and file_tag prefix tag.
     """
     parquet_path = (
         project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
@@ -235,7 +222,7 @@ def resolve_paths(
 
 
 # ======================================================================
-# [D] DAYPART HELPERS (lógica sin cambios)
+# [D] DAYPART HELPERS
 # ======================================================================
 
 def hours_in_daypart(start_hour: int, end_hour: int) -> list[int]:
@@ -421,23 +408,13 @@ def load_prepared_dataset(
 ) -> pd.DataFrame:
     """
     Loads row-level hour_local/value_col data from the Step 0 Parquet,
-    filtered to the valid days from Step 1.
+    restricted to the Step 1 valid days. The Step 0 Parquet contains every
+    day, so without this filter low-completeness days would enter the
+    daypart frequencies.
 
-    Unlike the previous version (which read an already-filtered "prepared"
-    Parquet from Step 4), the Step 0 Parquet contains all 366 days, so the
-    valid-day filter now happens here explicitly - skipping it would
-    silently include low-completeness days in the daypart frequencies.
-
-    ndat_mode=None (default) is the legacy behaviour: no row is discarded
-    by Ndat. With a real mode, observations are restricted via
-    ndat_filter.apply_ndat_filter() right after the Step 1 valid-day
-    intersection and before anything else (same point already used in
-    3-temporal_variability.py / 4-hourly_variability.py). No explicit drop
-    of the Ndat column is needed afterwards - unlike Step 4's `prepared`,
-    this function already ends with a narrow `return
-    df[["hour_local", value_col]]`, which excludes the Ndat column from
-    what reaches compute_daypart_frequency()/validate_daypart_results() in
-    every mode, including None.
+    With a ndat_mode, the observations are then restricted via
+    ndat_filter.apply_ndat_filter(), as in Steps 3-4; ndat_mode=None
+    applies no Ndat filter. Only hour_local and value_col are returned.
     """
     df = pd.read_parquet(
         parquet_path,
@@ -471,8 +448,7 @@ def load_prepared_dataset(
 
 
 # ======================================================================
-# [F] COMPUTATION (lógica sin cambios, parametrizada en vez de leer
-# VALUE_COL/PERCENTILE_HIGH/PERCENTILE_EXTREME directamente)
+# [F] COMPUTATION
 # ======================================================================
 
 def compute_daypart_frequency(

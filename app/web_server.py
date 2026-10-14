@@ -2,47 +2,35 @@
 # -*- coding: utf-8 -*-
 
 """
-Local web interface entry point (docs/roadmap.md).
+Local web interface of the pipeline.
 
-Serves static/index.html and exposes one HTTP endpoint that calls
-1-completitud.py's own run_completeness() / save_results_csv() /
-create_coverage_plot() directly - no reimplementation of the science,
-no subprocess. Standard library only (http.server), no web framework,
-per the roadmap's explicit design principle: "no crear una segunda
-implementacion cientifica para la web".
+Serves static/index.html, the results files (GET /results/...), the
+station list (GET /api/stations) and one POST endpoint per action
+(/api/run/step0 ... /api/run/step6, the cross-station comparisons and
+/api/browse-folder). Every endpoint calls the step scripts' own functions
+in this process - no subprocess and no second implementation of the
+science. Standard library only (http.server).
 
-Results are written to the exact same results/{STATION}/{YEAR}/... paths
-that console mode already uses - the web UI is another way to trigger
-the same pipeline, not a parallel one.
+Results are written to the same results/{STATION}/{YEAR}/... paths as in
+console mode: the web UI is another way to run the same pipeline.
 
-Currently wires up Steps 0, 1, 2 (with 2.2), 3 (with 3.2), 4 (with 4.2),
-5 (with 5.2) and 6 (individual only, no 6.2 yet). Steps 0, 4, 5 and 6 were
-all deliberately migrated "adapt only" (CLAUDE.md section 11) and have
-no pure run_x() function - they are wired via _patched_globals instead
-(see _handle_run_step0/_handle_run_step4/_handle_run_step5/_handle_run_step6).
-The X.2 cross-station comparisons (2.2/3.2/4.2/5.2) each expose a pure
-function and are wired the same simple way as Steps 1-3.
+Steps 1-3 and the comparisons 2.2/3.2/4.2/5.2 expose pure functions that
+receive the request parameters. Steps 0, 4, 5 and 6 read their parameters
+from module globals in main(); they are run through _patched_globals,
+which restores the console defaults afterwards.
 
-Step 0 has no `station` field, unlike every other step - it always
-processes every station listed in stations.json in one pass (each
-daily RAW file mixes all stations together, see 0-toParquet.py). It does
-have one field no other step has: `raw_dir`, the folder holding that
-year's daily RAW files (defaults to step0.DATA_DIR, "datos_Estudio"),
-used directly as a local filesystem path - not uploaded, since this
-process already has the same disk access the console script does.
+Step 0 has no `station` field: it processes every station listed in
+stations.json in one pass (each daily RAW file mixes all stations). Its
+`raw_dir` field is the folder with that year's RAW files (default
+step0.DATA_DIR), used directly as a local path - this process has the same
+disk access as the console script.
 
 /api/browse-folder opens a native Windows folder picker (Shell.Application's
-BrowseForFolder COM dialog, hosted by powershell.exe - see FOLDER_PICKER_PS1)
-and returns the chosen path so index.html can fill the `raw_dir` field
-without the user typing it by hand. Not <input type="file" webkitdirectory">:
-browsers never expose a real absolute filesystem path from that element,
-by design. Not tkinter: not guaranteed present in the embeddable Python
-distribution the packaged app will eventually use (docs/roadmap.md). Not
-System.Windows.Forms.FolderBrowserDialog: an earlier version used that and
-a real user test hung indefinitely with no visible dialog - see
-FOLDER_PICKER_PS1's own comment for the diagnosis. PowerShell and Shell32
-are both part of Windows itself, not a Python dependency - nothing new to
-pip install.
+BrowseForFolder, hosted by powershell.exe - see FOLDER_PICKER_PS1) so that
+index.html can fill `raw_dir`. Browsers never expose an absolute path from
+<input type="file" webkitdirectory>, and tkinter is not guaranteed in the
+embeddable Python distribution; PowerShell and Shell32 are part of Windows,
+so no extra dependency is needed.
 """
 
 import contextlib
@@ -64,16 +52,12 @@ sys.path.insert(0, str(Path(__file__).parent / "python_libraries"))
 
 import matplotlib
 # Must run before the first `import matplotlib.pyplot` anywhere - including
-# transitively, inside the step modules loaded below - or the backend
-# defaults to TkAgg. TkAgg is a GUI backend: it is not safe to touch outside
-# the process main thread, and ThreadingHTTPServer handles every request in
-# its own thread. Observed directly: worker threads intermittently crashing
-# the whole process (not just the request) with
-# "Tcl_AsyncDelete: async handler deleted by the wrong thread" while garbage
-# collecting Tk-backed figure objects from a plot-heavy request. Agg is the
-# standard headless/non-interactive backend - same savefig() output, no
-# window, safe from any thread. Purely technical (CLAUDE.md section 14): it
-# does not change any plotted data or PNG pixel output.
+# inside the step modules loaded below - or the backend may default to
+# TkAgg. TkAgg is a GUI backend that is not safe outside the main thread,
+# and ThreadingHTTPServer handles every request in its own thread; worker
+# threads can then crash the whole process with "Tcl_AsyncDelete: async
+# handler deleted by the wrong thread". Agg is headless and safe from any
+# thread, with the same savefig() output.
 matplotlib.use("Agg")
 
 import pandas as pd
@@ -148,30 +132,17 @@ def _unconfigured(requested: list[str], config: list[tuple[str, float]]) -> list
     known = {code for code, _ in config}
     return [s for s in requested if s not in known]
 
-# Switched away from System.Windows.Forms.FolderBrowserDialog after a real
-# user test hung indefinitely on "Waiting for dialog..." with no visible
-# window - root-caused to the owner-window pattern this used to have
-# (create a Form, .Show() it, then immediately .Hide() it, then pass it as
-# ShowDialog()'s owner): a WinForms modal dialog owned by a hidden form can
-# fail to reach the foreground reliably, and there is no way to verify this
-# interactively from here (a human has to click a real dialog - see the
-# conversation this was diagnosed in). Shell.Application.BrowseForFolder is
-# the classic COM/Shell32 folder-browse dialog (no .NET, no owner-window
-# trick, no STA-apartment subtlety to get wrong) - it is what native
-# Windows Explorer-style "Browse..." buttons have used since long before
-# .NET existed, and is a well-established, widely-used pattern specifically
-# because it reliably surfaces in the foreground on its own.
+# Shell.Application.BrowseForFolder is the classic Shell32 COM folder
+# dialog (no .NET, no owner window), which comes to the foreground on its
+# own. A WinForms FolderBrowserDialog owned by a hidden form may never
+# become visible, leaving the request waiting with no dialog.
 #
-# `RootFolder` is deliberately left at 0 (Desktop, i.e. "This PC" and every
-# drive) rather than seeded from the current raw_dir value: unlike
-# FolderBrowserDialog.SelectedPath (a pre-selection within a tree the user
-# can still navigate out of), BrowseForFolder's RootFolder *restricts* the
-# visible tree to that folder and everything below it - passing the current
-# raw_dir there would make it impossible to browse to a folder on a
-# different drive or outside that subtree, breaking the actual requirement
-# (pick *any* folder on the machine). Static script, never string-
-# interpolated with request data - nothing here reads $InitialDir at all,
-# so there is nothing for a crafted `initial_dir` value to inject into.
+# `RootFolder` is left at 0 (Desktop: "This PC" and every drive) rather than
+# the current raw_dir: BrowseForFolder's RootFolder *restricts* the visible
+# tree to that folder, which would prevent choosing a folder on another
+# drive. The script is static and never interpolated with request data
+# ($InitialDir is not used), so a crafted `initial_dir` cannot inject
+# anything.
 FOLDER_PICKER_PS1 = """\
 param([string]$InitialDir)
 
@@ -189,15 +160,11 @@ if ($null -ne $folder) {
 
 # matplotlib's pyplot state (current figure/axes, rcParams) is not
 # thread-safe, and ThreadingHTTPServer handles every request in its own
-# thread - two concurrent plot-producing requests can corrupt each other's
-# figure (observed directly: a linear-scale handler raising a mathtext
-# ParseException for "$\mathdefault{10^{-5}}$", a log-scale tick label that
-# only a *different*, concurrently-running handler could have produced).
-# Every handler that calls a save_*_plot()/create_*_plot() function is
-# wrapped with @_serialize_plots so only one thread touches matplotlib at a
-# time. Handlers that only read/check files (no plotting) are left
-# unwrapped on purpose - serializing them too would just make them wait
-# behind unrelated plot generation for no reason.
+# thread, so two concurrent plotting requests can corrupt each other's
+# figures. Every handler that calls a save_*_plot()/create_*_plot() function
+# is wrapped with @_serialize_plots so only one thread uses matplotlib at a
+# time. Handlers that only read/check files are not wrapped, so they never
+# wait behind plot generation.
 _PLOT_LOCK = threading.Lock()
 
 
@@ -211,8 +178,7 @@ def _serialize_plots(handler):
 def _load_module(filename: str, module_name: str):
     """
     Dynamically loads a script whose filename is not a valid Python
-    module name (starts with a digit) - same technique already used and
-    verified in 2.2-ccdf_comparison.py and 5.2-daypart_comparison.py.
+    module name (starts with a digit).
     """
     spec = importlib.util.spec_from_file_location(module_name, APP_DIR / filename)
     module = importlib.util.module_from_spec(spec)
@@ -236,12 +202,10 @@ step6 = _load_module("6-month_hour_heatmaps.py", "step6_month_hour_heatmaps")
 @contextlib.contextmanager
 def _patched_globals(module, **overrides):
     """
-    Temporarily overwrites module-level globals (for scripts like Step 4-6
-    that read their parameters from globals, not function arguments -
-    CLAUDE.md section 11, "adapt only" scope, deliberately not refactored
-    into a pure function) and restores the original values on exit, even
-    if the wrapped call raises - the console pipeline's own state must
-    never end up different just because a web request passed through it.
+    Temporarily overwrites module-level globals (for Steps 0 and 4-6, whose
+    main() reads its parameters from globals) and restores the original
+    values on exit, even if the wrapped call raises, so a web request never
+    changes the console defaults.
     """
     originals = {name: getattr(module, name) for name in overrides}
     try:
@@ -281,9 +245,7 @@ def _hours_at_max(df_hourly, freq_col):
 def _dayparts_at_max(df_daypart, freq_col):
     """
     Same tie-aware logic as _hours_at_max, keyed on daypart name instead
-    of hour_local - Step 5 has only 4 categories, so a near-tie (e.g.
-    UNSA's Afternoon/Evening in p90, see hallazgos.md 1.4) is plausible
-    even if not currently exact.
+    of hour_local.
     """
     max_value = df_daypart[freq_col].max()
     tied = df_daypart[df_daypart[freq_col] == max_value]
@@ -447,35 +409,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_browse_folder(self) -> None:
         """
-        Opens a native Windows folder picker and returns the chosen path -
-        see FOLDER_PICKER_PS1 / the module docstring for why powershell.exe
-        + Shell.Application, not <input type="file"> or tkinter.
+        Opens a native Windows folder picker and returns the chosen path
+        (see FOLDER_PICKER_PS1 and the module docstring).
 
-        -STA: explicit, not relied on as a default - Shell.Application does
-        not actually require it (unlike the WinForms dialog this used to
-        call), but it costs nothing and removes any ambiguity.
-        stdin=DEVNULL: if anything in this call chain ever tries to prompt
-        interactively (it should not - -NonInteractive already covers
-        PowerShell's own confirmation prompts), reading from stdin fails
-        immediately instead of hanging forever waiting for input nobody can
-        provide from an HTTP request. Direct defense against the exact
-        failure mode being guarded against here: a request that hangs with
-        no visible cause and no way to recover except restarting the server.
+        -STA is explicit, although Shell.Application does not strictly
+        require it. stdin=DEVNULL: any unexpected interactive prompt fails
+        immediately instead of leaving the request hanging.
 
-        90s timeout, deliberately shorter than a human might actually take
-        to browse folders: this project's UI never leaves a request hanging
-        indefinitely (CLAUDE.md's "no fallback silencioso" discipline,
-        applied here as "no dejar la peticion esperando en silencio") -
-        index.html's browseRawDir() also aborts client-side around the same
-        time, so the UI recovers either way, whichever fires first. If a
-        real dialog is up and the user just needs longer, "Browse..." can
-        simply be clicked again.
+        90 s timeout, so the request never waits indefinitely; index.html's
+        browseRawDir() also aborts client-side around the same time. If the
+        user needs longer, "Browse..." can be clicked again.
 
-        Blocking: subprocess.run() blocks this request's own thread until
-        PowerShell exits or the timeout fires - contained to that one
-        thread only (ThreadingHTTPServer gives every request its own
-        thread), so it does not stall any other concurrent request (e.g. a
-        Step running at the same time).
+        subprocess.run() blocks only this request's thread
+        (ThreadingHTTPServer), not other concurrent requests.
         """
         try:
             params = self._read_json_body()
@@ -534,31 +480,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_run_step0(self) -> None:
         """
-        Step 0 was also migrated "adapt only" (CLAUDE.md section 11) -
-        main() reads YEAR/DATA_DIR/DOY_START/DOY_END from module globals
-        and returns nothing, same shape as Steps 4-6. Same
-        _patched_globals + call-the-real-main()-then-re-resolve-paths
-        pattern as _handle_run_step6, with two differences: no `station`
-        field (Step 0 always processes every stations.json station in
-        one pass), and one new field, `raw_dir` - the folder holding that
-        year's daily RAW files, defaulting to step0.DATA_DIR
-        ("datos_Estudio"). Used directly as a local filesystem path, not
-        uploaded: this process already has the same disk access the
-        console script has, and a browser directory-picker could not
-        supply a real absolute path anyway (webkitdirectory only ever
-        exposes paths relative to the picked folder, by browser design).
+        Step 0's main() reads YEAR/DATA_DIR/DOY_START/DOY_END and the
+        station settings from module globals and returns nothing, so it is
+        run through _patched_globals, as Steps 4-6. No `station` field:
+        Step 0 processes every stations.json station in one pass. `raw_dir`
+        is the folder with that year's RAW files (default step0.DATA_DIR),
+        used directly as a local path.
 
-        Paths are re-resolved via step0.resolve_global_paths(year) *after*
-        the _patched_globals block exits, using the request's own local
-        `year` - not by reading step0's module globals post-call, which
-        _patched_globals has already restored to their console defaults
-        by then. Same reasoning as _handle_run_step6 re-reading via
-        step6.resolve_paths(station, year, ...) with the request's own
-        arguments, never via mutated-then-restored module state.
+        Output paths are re-resolved afterwards with
+        step0.resolve_global_paths(year) from the request's own `year`, not
+        from step0's globals, which _patched_globals has already restored.
 
-        Not wrapped with @_serialize_plots - Step 0 does no plotting
-        (same reasoning as _handle_run_step2_ccdf_grid /
-        _handle_run_step6_cross_station_maxima).
+        Not wrapped with @_serialize_plots: Step 0 does no plotting.
         """
         try:
             params = self._read_json_body()
@@ -911,8 +844,7 @@ class Handler(BaseHTTPRequestHandler):
 
                     # Low support is per (station, month), not per month alone -
                     # the same month can be low-support for one station and
-                    # fine for another (e.g. UNSA August n_days=1, normal
-                    # elsewhere), so this must not be collapsed into one
+                    # fine for another, so this must not be collapsed into one
                     # month-only list the way the single-station endpoint does.
                     n_days_by_month = dict(zip(results["df_pcts"]["month"], results["df_pcts"]["n_days"]))
                     low_support[station] = [
@@ -1202,15 +1134,11 @@ class Handler(BaseHTTPRequestHandler):
     @_serialize_plots
     def _handle_run_step4(self) -> None:
         """
-        Step 4 was deliberately migrated "adapt only" (CLAUDE.md section 11)
-        - unlike Steps 1-3, main() reads STATION/YEAR/DOY_START/DOY_END/
-        TH_COV from module globals, not from arguments, and returns
-        nothing. Rather than refactor that (an unrequested methodology/
-        scope change - CLAUDE.md section 14), this calls the real,
-        unmodified main() with its globals temporarily patched
-        (_patched_globals restores them afterward), then re-reads the CSV
-        main() just wrote (resolve_paths() is already pure/parametrized)
-        to build the JSON summary.
+        Unlike Steps 1-3, Step 4's main() reads STATION/YEAR/DOY_START/
+        DOY_END/TH_COV/NDAT_MODE from module globals and returns nothing.
+        It is run unmodified with its globals temporarily patched
+        (_patched_globals restores them afterwards); the CSV it wrote is
+        then read back via resolve_paths() to build the JSON summary.
         """
         try:
             params = self._read_json_body()
@@ -1241,9 +1169,8 @@ class Handler(BaseHTTPRequestHandler):
 
             # main() has no return value - rebuild the same paths (from the
             # request params, not from step4's now-restored globals) to
-            # read back the CSV it just wrote. Same ndat_mode variable as
-            # the _patched_globals call above - see CLAUDE.md section 10/14
-            # discipline (one mode, two call sites, never re-derived).
+            # read back the CSV it just wrote, with the same ndat_mode
+            # passed to main() above.
             index_config = step4.validate_index_supported(step4.VALUE_COL)
             paths = step4.resolve_paths(
                 station, year, doy_start, doy_end, th_cov, step4.VALUE_COL, index_config,
@@ -1277,10 +1204,9 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_run_step4_comparison(self) -> None:
         """
         Unlike Step 4 itself, 4.2-hourly_comparison.py has a pure
-        run_hourly_comparison() (station list comes from stations.json, not its own STATIONS
-        config, same as 2.2/3.2 - not a per-request field) - wired the
-        same simple way as the other X.2 comparison endpoints, no
-        _patched_globals needed here.
+        run_hourly_comparison(), called directly like the other X.2
+        comparisons (station list from stations.json); no _patched_globals
+        needed.
         """
         try:
             params = self._read_json_body()
@@ -1339,11 +1265,10 @@ class Handler(BaseHTTPRequestHandler):
     @_serialize_plots
     def _handle_run_step5(self) -> None:
         """
-        Same shape as _handle_run_step4: 5-daypart_variability.py was also
-        migrated "adapt only" (CLAUDE.md section 11) - main() reads its
-        parameters from globals and returns nothing. Same
-        _patched_globals + re-read-the-CSV pattern, just summarized by
-        dominant daypart (_dayparts_at_max) instead of hour of day.
+        Same pattern as _handle_run_step4 (main() reads its parameters from
+        globals and returns nothing; run through _patched_globals, then the
+        CSV is read back), summarised by dominant daypart
+        (_dayparts_at_max) instead of hour of day.
         """
         try:
             params = self._read_json_body()
@@ -1404,12 +1329,10 @@ class Handler(BaseHTTPRequestHandler):
     @_serialize_plots
     def _handle_run_step5_comparison(self) -> None:
         """
-        Same wiring style as 4.2/3.2/2.2 - 5.2-daypart_comparison.py has a
-        pure run_daypart_comparison(), no _patched_globals needed. Two
-        differences from 4.2, not oversights: run_daypart_comparison()
-        also takes th_cov (its own coverage-consistency cross-check, see
-        that script's docstring), and it saves a single combined PNG
-        (p90+p99 stacked), not two separate ones.
+        Same wiring as 2.2/3.2/4.2: 5.2-daypart_comparison.py has a pure
+        run_daypart_comparison(), no _patched_globals needed. Unlike 4.2,
+        it also takes th_cov (coverage cross-check, see that script's
+        docstring) and saves a single combined PNG (p90 and p99 stacked).
         """
         try:
             params = self._read_json_body()
@@ -1465,13 +1388,10 @@ class Handler(BaseHTTPRequestHandler):
     @_serialize_plots
     def _handle_run_step6(self) -> None:
         """
-        Same shape as Step 4/5: 6-month_hour_heatmaps.py was also
-        migrated "adapt only" (CLAUDE.md section 11) - main() reads its
-        parameters from globals and returns nothing. Same
-        _patched_globals + re-read-the-outputs pattern. Unlike Step 4/5,
-        no new max-detection helper is needed here - main() itself now
-        saves the Top-10 CSVs (get_top_cells()), so this just reads them
-        back, same as every other output file.
+        Same pattern as Steps 4-5: main() reads its parameters from globals
+        and returns nothing; it is run through _patched_globals and its
+        outputs, including the Top-10 cells CSVs (get_top_cells()), are
+        read back.
         """
         try:
             params = self._read_json_body()
@@ -1530,12 +1450,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_run_step6_cross_station_maxima(self) -> None:
         """
-        Cross-station summary view for Step 6 - NOT a Step 6.2 comparator
-        (Step 6 has none). Reads the rank-1 row of each station's already-
-        saved Top-10 p90/p99 CSVs via step6.get_cross_station_maxima() - no
-        plotting, no recomputation, so unlike Step 6 itself this is not
-        wrapped with @_serialize_plots (same reasoning as
-        _handle_run_step2_ccdf_grid, the other read-only/no-plot handler).
+        Cross-station summary of Step 6 (there is no 6.2 comparison): reads
+        the rank-1 row of each station's saved Top-10 p90/p99 CSVs via
+        step6.get_cross_station_maxima(). No plotting and no recomputation,
+        so it is not wrapped with @_serialize_plots.
         """
         try:
             params = self._read_json_body()

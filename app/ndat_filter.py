@@ -2,25 +2,22 @@
 # -*- coding: utf-8 -*-
 
 """
-Ndat quality criterion for ROTI L1 scientific analyses (Steps 2-6).
+Ndat criterion for ROTI L1 observations (Steps 2-6).
 
-Single source of truth for the four Ndat modes and the one function that
-applies them - every step script that needs to restrict observations by
-Ndat(ROTI L1) imports this module instead of reimplementing the filter
-(CLAUDE.md section 14: this is a methodological criterion, not a
-technical detail to duplicate per script).
+Ndat (column 08_ndat_roti_l1) is the number of samples used to compute each
+ROTI L1 value; Ndat = 60 corresponds to a complete one-minute interval.
+NDAT_MODES defines the supported criteria, and "eq60" is the official
+criterion of the study. Every step imports this module, so the criterion is
+defined and applied in a single place.
 
-Deliberately does not use the existing 23_qc_ndat_ok flag (it only
-represents Ndat==60, not the other three modes) nor 25_qc_all_ok (bundles
-elevation/plausibility filters that are separate, still-undecided QC
-criteria - CLAUDE.md section 9, qc-open-decisions.md memory) - works
-directly off 08_ndat_roti_l1 instead, for all four modes alike.
+The filter works directly on 08_ndat_roti_l1 rather than on the Step 0 QC
+flags: 23_qc_ndat_ok only encodes Ndat == 60, and 25_qc_all_ok also combines
+elevation and plausibility checks that are not applied in this study.
 
-Step 0 and Step 1 do not use this module to select data: Step 0 keeps every
-observation unfiltered, and Step 1 measures temporal availability,
-independent of Ndat (CLAUDE.md section 7-8). Step 1 only calls it for its
-optional, informative Ndat-impact diagnostic (run_ndat_impact), which never
-changes the valid/invalid status.
+The filter selects observations, not days. Valid days are decided in Step 1
+from temporal coverage without Ndat, and the coverage threshold is not
+re-applied after filtering. Step 1 uses this module only for its optional
+Ndat-impact diagnostic, which never changes the valid/invalid status.
 """
 
 import pandas as pd
@@ -57,11 +54,7 @@ NDAT_MODES = {
 
 
 def validate_ndat_mode(mode: str) -> dict:
-    """
-    Checks that `mode` is one of the four supported Ndat criteria and
-    returns its NDAT_MODES entry - same role as validate_index_supported()
-    in 2-ccdf.py, one more axis.
-    """
+    """Return the NDAT_MODES entry for `mode`; raise ValueError if unknown."""
     if mode not in NDAT_MODES:
         raise ValueError(
             f"Unknown Ndat mode '{mode}'. Known modes: {sorted(NDAT_MODES)}"
@@ -75,13 +68,9 @@ def apply_ndat_filter(
     ndat_column: str = NDAT_PARQUET_COLUMN,
 ) -> pd.DataFrame:
     """
-    Returns a new DataFrame with only the rows of `df` that satisfy the
-    given Ndat mode - never mutates `df`. Row order is preserved (boolean
-    masking only, no sort/groupby).
-
-    "all" is a pure pass-through and does not require `ndat_column` to be
-    present. The other three modes do, and raise KeyError with an
-    explicit message if it is missing, instead of failing silently.
+    Return a copy of `df` restricted to the rows that satisfy the Ndat mode.
+    Row order and index are preserved. "all" returns every row and does not
+    need `ndat_column`; the other modes raise KeyError if it is missing.
     """
     validate_ndat_mode(mode)
 

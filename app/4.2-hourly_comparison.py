@@ -13,31 +13,26 @@ for each station and builds:
   - two combined plots, one per percentile, overlaying every station's
     full 24-hour frequency curve on the same axis.
 
-Does not recompute anything and never touches the Step 0 Parquet, the
-Step 1 completeness CSV or the Step 3 thresholds - it only reads what
-4-hourly_variability.py has already produced per station. Same
-philosophy as 2.2-ccdf_comparison.py / 3.2-temporal_comparison.py: a
-station whose Step 4 has not been run yet is skipped, not fatal.
+Nothing is recomputed; only what 4-hourly_variability.py has saved per
+station is read. As in 2.2/3.2, a station without Step 4 output is
+skipped, not fatal.
 
-IMPORTANT scientific caveat (documented here because it is easy to
-misread the comparison otherwise): "local hour" is each station's own
-fixed UTC offset (CLAUDE.md section 6), not a simultaneous instant
-across stations - hour 22 at UNSA and hour 22 at KOUG are not the same
-moment in real time. This script compares diurnal/solar-local patterns
-per station, not synchronized events; for that, see Step 3.2's
-DoY-based candidates instead.
+IMPORTANT scientific caveat: "local hour" is UTC plus each station's own
+fixed offset (not magnetic local time), so it is not a simultaneous
+instant across stations - hour 22 at UNSA and hour 22 at KOUG are
+different moments. This script compares each station's diurnal pattern
+in its own local time, not synchronized events; for those, see Step
+3.2's DoY-based candidates.
 
-Local hour is also a cyclic variable: 23h and 00h are consecutive, not
-the two ends of a linear scale. A station whose activity sits near both
-edges of the 0-23 plot may have one continuous nocturnal structure, not
-two separate peaks (see hallazgos.md, "Alcance y limitaciones").
+Local hour is also cyclic: 23h and 00h are consecutive, not the two ends
+of a linear scale. Activity near both edges of the 0-23 plot may be one
+continuous nocturnal structure, not two separate peaks.
 
-This step is explicitly descriptive, not interpretive (CLAUDE.md
-section 1): it reports the cross-station hourly pattern, it does not
-attempt to explain it physically.
+The output is descriptive: the cross-station hourly pattern is reported,
+not interpreted physically.
 
 Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported() (CLAUDE.md section 3-bis).
+INDEX_CONFIG / validate_index_supported().
 """
 
 from pathlib import Path
@@ -66,17 +61,15 @@ TH_COV = 0.75
 # Index to compare. Only "roti_l1" is scientifically implemented/validated.
 VALUE_COL = "roti_l1"
 
-# Ndat criterion to compare across stations. See ndat_filter.py - eq60 is
-# the TFM official default. Safe here (unlike 4-hourly_variability.py's
-# NDAT_MODE=None): run_hourly_comparison() is a pure function and
-# web_server.py calls it without passing ndat_mode, so this default only
-# affects console/main() runs, never the web (same situation as 2.2/3.2).
+# Ndat criterion to compare across stations (see ndat_filter.py); "eq60"
+# is the official criterion of the study. Only used by main(): the web
+# interface passes the selected mode explicitly. With this default, the
+# untagged outputs of 4-hourly_variability.py's console default
+# (NDAT_MODE = None) are not read.
 NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
 
-# Fixed color per station (identity, not position in a list - same
-# motivation as STATION_COLORS in 2-ccdf.py / 3.2-temporal_comparison.py).
-# Independent copy, not imported - each script here is self-contained by
-# convention.
+# Fixed colour per station (by name, not by list position), same as in
+# 2-ccdf.py; stations without an entry get a fallback colour (plot_style).
 STATION_COLORS = {"UNSA": "tab:orange", "KOUG": "tab:blue", "WHIT": "tab:green", "YELL": "tab:red"}
 
 SHOW_PLOTS = False
@@ -86,8 +79,7 @@ PLOT_DPI = 250
 # ======================================================================
 # [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL <-> UNIT
 # ======================================================================
-# Same copy already used by every other script in this project
-# (established convention: each script is self-contained).
+# Same index definitions as in Steps 2-6 (each script is self-contained).
 
 INDEX_CONFIG = {
     "roti_l1": {
@@ -160,12 +152,10 @@ def resolve_station_hourly_csv(
     ndat_mode: str | None = None,
 ) -> Path:
     """
-    Mirrors 4-hourly_variability.py's own resolve_paths() naming exactly,
-    including its ndat_mode branch (None = legacy path/prefix, a real mode
-    adds ndat_config["dir_tag"]/["file_tag"]). value_col is now an explicit
-    parameter (previously this function read the module-level VALUE_COL
-    directly, a pre-existing deviation from CLAUDE.md section 11 unrelated
-    to Ndat, already fixed the same way in 3.2-temporal_comparison.py).
+    Path to the hourly_frequency.csv saved by 4-hourly_variability.py for
+    one station. Mirrors the naming of its resolve_paths(), including
+    ndat_mode (None: untagged; a mode: dir_tag subfolder and file_tag
+    prefix tag).
     """
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "4_hourly_variability" / value_col
 
@@ -188,21 +178,13 @@ def resolve_comparison_paths(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Output paths under results/global/{YEAR}/ - never inside a single
-    station's own folder.
+    Output paths under results/global/{YEAR}/ - never inside a station
+    folder. ndat_mode=None: directly in 4_hourly_comparison/; a mode adds
+    the value_col and ndat_config["dir_tag"] subfolders.
 
-    value_col/ndat_mode are new, trailing, defaulted parameters -
-    web_server.py's existing call, resolve_comparison_paths(year,
-    index_config) (2 positional arguments), keeps working completely
-    unchanged. Deliberately placed after index_config, not before like
-    2.2/3.2's equivalent, for the same reason already documented there:
-    that order would break the existing positional call here.
-
-    ndat_mode=None (default) reproduces exactly today's flat path (no
-    index or Ndat directory level). A real mode adds *both* a value_col
-    level and an ndat_config["dir_tag"] level at once, atomically, only in
-    this branch - same mechanism already validated in
-    2.2/3.2's resolve_comparison_paths().
+    As in 3.2, value_col follows index_config and has a default, so
+    web_server.py calls this as
+    resolve_comparison_paths(year, index_config, ndat_mode=...).
     """
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "4_hourly_comparison"
 
@@ -228,10 +210,7 @@ def resolve_comparison_paths(
 def _hours_at_max(df_hourly: pd.DataFrame, freq_col: str) -> tuple[list[int], float, int]:
     """
     All hours tied for the maximum of freq_col - idxmax() alone would
-    silently return only the first one, hiding a genuine tie. Own copy,
-    not imported from web_server.py - same logic, kept independent per
-    this project's "no cross-script imports between numbered pipeline
-    scripts" convention.
+    return only the first one, hiding a genuine tie.
     """
     max_value = df_hourly[freq_col].max()
     tied = df_hourly[df_hourly[freq_col] == max_value]
@@ -252,23 +231,15 @@ def run_hourly_comparison(
     combined plots.
 
     Pure function: no prints, no file writes. Raises ValueError if
-    value_col is not scientifically supported. Raises FileNotFoundError
-    only if none of the requested stations have Step 4 output yet - a
-    partial set is a normal, expected result, not an error.
+    value_col is not scientifically supported, and FileNotFoundError only
+    if no requested station has Step 4 output (a partial set is a normal
+    result).
 
-    ndat_mode=None (default) is the legacy behaviour: reads each
-    station's flat, un-tagged CSV, unchanged from before this script knew
-    about Ndat - so a caller that does not pass this argument (today,
-    web_server.py) is unaffected. With a real mode, each station's CSV is
-    looked up under that exact Ndat directory/tag
-    (resolve_station_hourly_csv) - there is no fallback to another mode
-    or to the legacy path if it is missing: a station missing its
-    Ndat-specific output is reported in missing_stations with the
-    Ndat-tagged path that was actually checked, exactly like any other
-    missing station. All stations in one call share the same single
-    ndat_mode value (like year/value_col already do), so mixing Ndat
-    modes across stations within one comparison is structurally
-    impossible.
+    Each station's CSV is looked up for exactly the given ndat_mode
+    (None: untagged path). There is no fallback to another mode: a
+    station without that output is reported in missing_stations with the
+    path that was checked. All stations share one ndat_mode, so Ndat
+    criteria are never mixed within a comparison.
     """
     index_config = validate_index_supported(value_col)
     ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None
@@ -348,9 +319,8 @@ def save_hourly_comparison_plot(
     one percentile (90 or 99) on a shared axis - color fixed per station
     (STATION_COLORS).
 
-    "Local hour" is each station's own fixed UTC offset (CLAUDE.md
-    section 6) - stations are compared by diurnal/solar-local pattern,
-    not by simultaneous real time. The hour axis is also cyclic (23h and
+    "Local hour" uses each station's own fixed UTC offset - stations are
+    compared by diurnal pattern, not by simultaneous real time. The hour axis is also cyclic (23h and
     00h are consecutive), so activity near both edges of the plot may be
     one continuous nocturnal structure rather than two separate peaks.
     """

@@ -19,30 +19,22 @@ Reads the annual_thresholds.csv and daily_frequency.csv that
     the same axis, so a day that stands out for several stations is
     visible directly.
 
-Does not recompute anything and never touches the Step 0 Parquet or the
-Step 1 completeness CSV - it only reads what 3-temporal_variability.py
-has already produced per station. Same philosophy as
-2.2-ccdf_comparison.py: a station whose Step 3 has not been run yet is
-skipped, not fatal.
+Nothing is recomputed, and neither the Step 0 Parquet nor the Step 1 CSV
+is read - only what 3-temporal_variability.py has saved per station. As in
+2.2-ccdf_comparison.py, a station without Step 3 output is skipped, not
+fatal.
 
-IMPORTANT scientific caveat (documented here because it is easy to
-misread the coincidences table otherwise): each station's p90/p99
-threshold is its OWN annual threshold. A day appearing in two stations'
-top-N lists at once means both stations show elevated activity RELATIVE
-TO THEIR OWN yearly distribution - it does NOT mean both stations had
-the same absolute ROTI L1 magnitude that day. This script does not
-attempt to compare absolute magnitude between stations; that would need
-a different analysis (see Step 2's monthly percentiles/CCDF for that).
+IMPORTANT scientific caveat: each station's p90/p99 threshold is its OWN
+annual threshold. A day in the top-N lists of two stations means both
+show elevated activity RELATIVE TO THEIR OWN yearly distribution - NOT
+that both had the same absolute ROTI L1 magnitude that day. Absolute
+magnitudes are compared in Step 2 (monthly percentiles/CCDF).
 
-This step is explicitly descriptive, not interpretive (CLAUDE.md
-section 1): it detects and reports candidate days, it does not attempt
-to explain them physically. Candidates worth investigating further
-(against Kp/Dst/F10.7/known storms/literature) belong in hallazgos.md as
-"candidates to investigate", written by hand after reviewing the actual
-output - not generated automatically by this script.
+The output is descriptive: candidate days are detected and reported, not
+interpreted physically.
 
 Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported() (CLAUDE.md section 3-bis).
+INDEX_CONFIG / validate_index_supported().
 """
 
 from pathlib import Path
@@ -71,17 +63,16 @@ TH_COV = 0.75
 # Index to compare. Only "roti_l1" is scientifically implemented/validated.
 VALUE_COL = "roti_l1"
 
-# Ndat criterion to compare across stations. See ndat_filter.py - eq60 is
-# the TFM official default.
+# Ndat criterion to compare across stations (see ndat_filter.py); "eq60"
+# is the official criterion of the study.
 NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
 
 # How many top days (by frequency_p99_pct) to keep per station, and to
 # check for cross-station coincidences.
 TOP_N_DAYS = 10
 
-# Fixed color per station (identity, not position in a list - same
-# motivation as month_color()/STATION_COLORS in 2-ccdf.py). Independent
-# copy, not imported - each script here is self-contained by convention.
+# Fixed colour per station (by name, not by list position), same as in
+# 2-ccdf.py; stations without an entry get a fallback colour (plot_style).
 STATION_COLORS = {"UNSA": "tab:orange", "KOUG": "tab:blue", "WHIT": "tab:green", "YELL": "tab:red"}
 
 SHOW_PLOTS = False
@@ -91,8 +82,7 @@ PLOT_DPI = 250
 # ======================================================================
 # [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL <-> UNIT
 # ======================================================================
-# Same copy already used by every other script in this project
-# (established convention: each script is self-contained).
+# Same index definitions as in Steps 2-6 (each script is self-contained).
 
 INDEX_CONFIG = {
     "roti_l1": {
@@ -165,13 +155,10 @@ def resolve_station_thresholds_csv(
     ndat_mode: str | None = None,
 ) -> Path:
     """
-    Mirrors 3-temporal_variability.py's own resolve_paths() naming exactly,
-    including its ndat_mode branch (None = legacy path/prefix, a real mode
-    adds ndat_config["dir_tag"]/["file_tag"]) - see that function's own
-    docstring for what each branch does. value_col is now an explicit
-    parameter (previously this function read the module-level VALUE_COL
-    directly, a pre-existing deviation from CLAUDE.md section 11 unrelated
-    to Ndat, fixed here since this signature is already being touched).
+    Path to the annual_thresholds.csv saved by 3-temporal_variability.py
+    for one station. Mirrors the naming of its resolve_paths(), including
+    ndat_mode (None: untagged; a mode: dir_tag subfolder and file_tag
+    prefix tag).
     """
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
 
@@ -197,9 +184,8 @@ def resolve_station_daily_csv(
     ndat_mode: str | None = None,
 ) -> Path:
     """
-    Mirrors 3-temporal_variability.py's own resolve_paths() naming exactly
-    - same logic as resolve_station_thresholds_csv() above, only the
-    output filename differs.
+    Path to the daily_frequency.csv saved by 3-temporal_variability.py;
+    same logic as resolve_station_thresholds_csv().
     """
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
 
@@ -222,23 +208,13 @@ def resolve_comparison_paths(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Output paths under results/global/{YEAR}/ - never inside a single
-    station's own folder.
+    Output paths under results/global/{YEAR}/ - never inside a station
+    folder. ndat_mode=None: directly in 3_temporal_comparison/; a mode
+    adds the value_col and ndat_config["dir_tag"] subfolders.
 
-    value_col/ndat_mode are new, trailing, defaulted parameters -
-    web_server.py's existing call, resolve_comparison_paths(year,
-    index_config) (2 positional arguments), keeps working completely
-    unchanged. Deliberately placed after index_config, not before like
-    2.2-ccdf_comparison.py's equivalent (year, value_col, index_config,
-    ndat_mode=None) - that order would break the existing positional call
-    here.
-
-    ndat_mode=None (default) reproduces exactly today's flat path (no
-    index or Ndat directory level - this global path was never nested by
-    index before Ndat existed). A real mode adds *both* a value_col level
-    and an ndat_config["dir_tag"] level at once, atomically, only in this
-    branch - same mechanism already validated in
-    2.2-ccdf_comparison.py::resolve_comparison_paths().
+    Unlike 2.2-ccdf_comparison.py, value_col follows index_config and has
+    a default, so web_server.py calls this as
+    resolve_comparison_paths(year, index_config, ndat_mode=...).
     """
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "3_temporal_comparison"
 
@@ -283,13 +259,10 @@ def _find_coincidences(top_days: pd.DataFrame) -> pd.DataFrame:
     Dates present in the top-N list of 2+ stations - see module docstring
     for what this does and does not mean scientifically.
 
-    frequency_p99_pct_by_station / rank_by_station are a per-station
-    summary formatted from columns top_days already carries (rank,
-    frequency_p99_pct) - not a new computation, not a new file read. The
-    full-precision, unformatted values remain available in top_days /
-    top_days.csv; these two columns exist only so the coincidences table
-    (web and CSV) does not require cross-referencing top_days.csv by hand
-    to see how "elevated" each involved station actually was that day.
+    frequency_p99_pct_by_station / rank_by_station are formatted from the
+    rank and frequency_p99_pct columns of top_days (full precision stays
+    in top_days.csv), so the coincidences table shows how elevated each
+    station was without cross-referencing top_days.csv.
     """
     if top_days.empty:
         return pd.DataFrame(columns=_COINCIDENCE_COLUMNS)
@@ -332,23 +305,15 @@ def run_temporal_comparison(
     module docstring.
 
     Pure function: no prints, no file writes. Raises ValueError if
-    value_col is not scientifically supported. Raises FileNotFoundError
-    only if none of the requested stations have Step 3 output yet - a
-    partial set is a normal, expected result, not an error.
+    value_col is not scientifically supported, and FileNotFoundError only
+    if no requested station has Step 3 output (a partial set is a normal
+    result).
 
-    ndat_mode=None (default) is the legacy behaviour: reads each
-    station's flat, un-tagged CSVs, unchanged from before this script knew
-    about Ndat - so a caller that does not pass this argument (today,
-    web_server.py) is unaffected. With a real mode, each station's CSVs
-    are looked up under that exact Ndat directory/tag
-    (resolve_station_thresholds_csv/resolve_station_daily_csv) - there is
-    no fallback to another mode or to the legacy path if they are
-    missing: a station missing its Ndat-specific output is reported in
-    missing_stations with the Ndat-tagged path that was actually checked,
-    exactly like any other missing station. All stations in one call
-    share the same single ndat_mode value (like year/value_col already
-    do), so mixing Ndat modes across stations within one comparison is
-    structurally impossible.
+    Each station's CSVs are looked up for exactly the given ndat_mode
+    (None: untagged paths). There is no fallback to another mode: a
+    station without that output is reported in missing_stations with the
+    path that was checked. All stations share one ndat_mode, so Ndat
+    criteria are never mixed within a comparison.
     """
     index_config = validate_index_supported(value_col)
     ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None

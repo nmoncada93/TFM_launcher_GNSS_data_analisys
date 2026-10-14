@@ -4,45 +4,27 @@
 """
 Step 5.2 - Cross-station comparison of Step 5 daypart exceedance frequencies.
 
-Reads the daypart_frequency.csv that 5-daypart_variability.py already
-saves for each station and merges them into one comparison table and one
-combined plot. Does not recompute anything and never touches the Step 0
-Parquet - same design as 2.2-ccdf_comparison.py, for the same reason: the
-4 stations were already run with the same parameters, so re-deriving the
-numbers here would only add cost, not correctness.
+Reads the daypart_frequency.csv saved by 5-daypart_variability.py for each
+station and merges them into one comparison table (CSV) and one combined
+plot (PNG). Nothing is recomputed and the Step 0 Parquet is not read. A
+station without Step 5 output is skipped and reported, not fatal.
 
-A station whose Step 5 has not been run yet (or whose Step 5 output still
-uses the previous 3-daypart definition) is skipped, not silently merged -
-see the daypart-layout check below.
+Daypart-layout check: before merging, every compared station must have the
+same daypart_order/daypart/hour_range triplets. A month number always
+means the same month, but a daypart name depends on the DAYPARTS
+configuration of 5-daypart_variability.py, so merging by name alone could
+compare different time windows under the same label. A mismatch is a hard
+error (ValueError), unlike the th_cov check: a value computed with a
+slightly different coverage threshold is still comparable, but a "Night"
+that means 18-06 for one station and 00-06 for another is not.
 
-Extra check specific to this script (Step 2's months don't need this,
-since "month=3" always means March regardless of configuration, but a
-daypart name does not carry that guarantee): before merging, this script
-confirms that every compared station's daypart_order/daypart/hour_range
-triplet is identical. Dayparts are a configured, named convention (see
-DAYPARTS in 5-daypart_variability.py) - if one station were ever run
-with a different boundary definition than the others (e.g. an old run
-still using the previous 3-daypart scheme), merging by name alone would
-silently compare incompatible time windows under the same label. This is
-treated as a hard error, not a warning, unlike the th_cov check below -
-a value computed with a slightly different coverage threshold is still
-comparable, but a "Night" that means 18-06 for one station and 00-06 for
-another is not.
-
-Also cross-checks that every compared station has a Step 1 coverage CSV
-matching this script's own th_cov, for the same reason as 2.2: Step 5's
-own filename does not encode th_cov, so nothing before this prevented
-silently comparing stations run with different coverage thresholds. This
-cross-check is a best-effort sanity check, not a guarantee - it confirms
-a matching Step 1 file exists, not that Step 5 itself was generated with
-that same threshold.
+th_cov check: Step 5 output names do not encode th_cov, so this script can
+only check that each compared station has a Step 1 coverage CSV for the
+same th_cov. It is a best-effort check: it confirms that such a Step 1
+file exists, not that Step 5 was generated from it.
 
 Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported() (CLAUDE.md section 3-bis).
-
-Purpose: a fast, agile cross-station view (one CSV + one PNG) meant to
-be read directly or handed to an AI assistant for interpretation help -
-not the final LaTeX-formatted output.
+INDEX_CONFIG / validate_index_supported().
 """
 
 from pathlib import Path
@@ -72,19 +54,16 @@ TH_COV = 0.75
 # Index to compare. Only "roti_l1" is scientifically implemented/validated.
 VALUE_COL = "roti_l1"
 
-# Ndat criterion to compare across stations. See ndat_filter.py - eq60 is
-# the TFM official default. Safe here (unlike 5-daypart_variability.py's
-# NDAT_MODE=None): run_daypart_comparison() is a pure function and
-# web_server.py calls it without passing ndat_mode, so this default only
-# affects console/main() runs, never the web (same situation as 2.2/3.2/4.2).
+# Ndat criterion to compare across stations (see ndat_filter.py); "eq60"
+# is the official criterion of the study. Only used by main(): the web
+# interface passes the selected mode explicitly. With this default, the
+# untagged outputs of 5-daypart_variability.py's console default
+# (NDAT_MODE = None) are not read.
 NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
 
-# Fixed color per station (identity, not position in available_stations -
-# same motivation as STATION_COLORS in 2-ccdf.py / 3.2 / 4.2). Independent
-# copy, not imported - each script here is self-contained by convention.
-# Without this, matplotlib's default color cycling assigns color by
-# position, which silently shifts if a station is missing (a normal,
-# already-handled case here - see missing_stations).
+# Fixed colour per station (by name, not by list position): with the
+# default colour cycle, colours would shift whenever a station is missing.
+# Stations without an entry get a fallback colour (plot_style).
 STATION_COLORS = {"UNSA": "tab:orange", "KOUG": "tab:blue", "WHIT": "tab:green", "YELL": "tab:red"}
 
 SHOW_PLOTS = False
@@ -94,9 +73,7 @@ PLOT_DPI = 250
 # ======================================================================
 # [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL <-> UNIT
 # ======================================================================
-# Same copy already used by 1-completitud.py through 2.2-ccdf_comparison.py
-# (established convention: each script is self-contained, no shared
-# config module yet).
+# Same index definitions as in Steps 2-6 (each script is self-contained).
 
 INDEX_CONFIG = {
     "roti_l1": {
@@ -140,9 +117,7 @@ INDEX_CONFIG = {
 def validate_index_supported(value_col: str) -> dict:
     """
     Same check as every other step: value_col must have a validated
-    scientific analysis, not just exist as a Parquet column. Receives
-    value_col explicitly so it works the same from main() or a future
-    caller with a different index.
+    scientific analysis, not just exist as a Parquet column.
     """
     if value_col not in INDEX_CONFIG:
         raise ValueError(
@@ -175,13 +150,10 @@ def resolve_station_daypart_csv(
     ndat_mode: str | None = None,
 ) -> Path:
     """
-    Path to the daypart_frequency.csv that 5-daypart_variability.py
-    already saves for one station. Mirrors that script's own
-    resolve_paths() naming exactly, including its ndat_mode branch (None
-    = legacy path/prefix, a real mode adds ndat_config["dir_tag"]/
-    ["file_tag"]) - not re-derived independently. value_col was already
-    an explicit parameter here (unlike 3.2/4.2 before their own fix), so
-    only ndat_mode is new.
+    Path to the daypart_frequency.csv saved by 5-daypart_variability.py
+    for one station. Mirrors the naming of its resolve_paths(), including
+    ndat_mode (None: untagged; a mode: dir_tag subfolder and file_tag
+    prefix tag).
     """
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "5_daypart_variability" / value_col
 
@@ -218,22 +190,10 @@ def resolve_comparison_paths(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Output paths for the comparison itself, under results/global/{YEAR}/ -
-    same convention 0-toParquet.py and 2.2-ccdf_comparison.py already use
-    for cross-station files, never inside a single station's own folder.
-
-    ndat_mode is a new, trailing, defaulted parameter - value_col was
-    already in its own position here (unlike 3.2/4.2, where it had to be
-    inserted after index_config for compatibility), so web_server.py's
-    existing call, resolve_comparison_paths(year, value_col, index_config)
-    (3 positional arguments), keeps working completely unchanged with no
-    reordering needed.
-
-    ndat_mode=None (default) reproduces exactly today's flat path (no
-    index or Ndat directory level). A real mode adds *both* a value_col
-    level and an ndat_config["dir_tag"] level at once, atomically, only in
-    this branch - same mechanism already validated in 2.2/3.2/4.2's
-    resolve_comparison_paths().
+    Output paths of the comparison, under results/global/{YEAR}/ (never
+    inside a station folder). ndat_mode=None: directly in
+    5_daypart_comparison/; a mode adds the value_col and
+    ndat_config["dir_tag"] subfolders.
     """
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "5_daypart_comparison"
 
@@ -272,25 +232,15 @@ def run_daypart_comparison(
 
     Pure function: no prints, no file writes. Raises ValueError if
     value_col is not scientifically supported, or if the compared
-    stations do not share the same daypart definition (see module
-    docstring - this is a hard error, not skipped like a missing
-    station). Raises FileNotFoundError only if none of the requested
-    stations have Step 5 output yet.
+    stations do not share the same daypart definition (a hard error, see
+    module docstring). Raises FileNotFoundError only if no requested
+    station has Step 5 output.
 
-    ndat_mode=None (default) is the legacy behaviour: reads each
-    station's flat, un-tagged CSV, unchanged from before this script knew
-    about Ndat - so a caller that does not pass this argument (today,
-    web_server.py) is unaffected. With a real mode, each station's CSV is
-    looked up under that exact Ndat directory/tag
-    (resolve_station_daypart_csv) - there is no fallback to another mode
-    or to the legacy path if it is missing: a station missing its
-    Ndat-specific output is reported in missing_stations with the
-    Ndat-tagged path that was actually checked, exactly like any other
-    missing station. All stations in one call share the same single
-    ndat_mode value (like year/value_col already do), so mixing Ndat
-    modes across stations within one comparison is structurally
-    impossible. The daypart-layout consistency check below is unrelated
-    to Ndat and is unchanged.
+    Each station's CSV is looked up for exactly the given ndat_mode
+    (None: untagged path). There is no fallback to another mode: a
+    station without that output is reported in missing_stations with the
+    path that was checked. All stations share one ndat_mode, so Ndat
+    criteria are never mixed within a comparison.
     """
     index_config = validate_index_supported(value_col)
     ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None

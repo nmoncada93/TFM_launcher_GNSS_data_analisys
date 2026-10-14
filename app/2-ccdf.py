@@ -4,18 +4,17 @@
 """
 Step 2 - Monthly CCDF and percentiles.
 
-Reads from the Step 0 Parquet and the results/{STATION}/{YEAR}/{STEP}/{INDEX}/
-layout, following the same philosophy as 1-completitud.py (CLAUDE.md
-section 11): global config as defaults, a pure parametrised
-run_ccdf_analysis() with no printing/file I/O, main() for console mode,
-import-safe, plots savable without depending on plt.show().
+Inputs: the Step 0 Parquet and the Step 1 coverage CSV. Outputs under
+results/{STATION}/{YEAR}/2_ccdf/{INDEX}/. Same structure as 1-completitud.py:
+globals in section [A] are console defaults, run_ccdf_analysis() is a pure
+parametrised calculation (no prints, no file writes), main() is the console
+entry point, and plots are saved without depending on plt.show().
 
-Scientific scope: only ROTI L1 (roti_l1) is implemented/validated for
-Step 2 - see INDEX_CONFIG / validate_index_supported() (CLAUDE.md
-section 3-bis).
+Only the Step 1 valid days are used; within them the Ndat criterion selects
+observations. The Step 1 coverage threshold is not re-applied after Ndat.
 
-Neither the CCDF/percentile calculation nor the plotting code changed in
-this pass - only how they are organised and parametrised.
+Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
+INDEX_CONFIG / validate_index_supported().
 """
 
 import pandas as pd
@@ -29,44 +28,41 @@ import plot_style
 import project_paths
 
 # ======================================================================
-# [A] CONFIG DEL ESTUDIO (TOCAR SOLO AQUÍ)
+# [A] STUDY CONFIGURATION
 # ======================================================================
 
-# [A.1] Caso de estudio
+# [A.1] Study case
 STATION = "YELL"
 YEAR = 2024
 DOY_START = 1
-DOY_END = 366  # 2024 es bisiesto
+DOY_END = 366  # 2024 is a leap year
 
-# [A.2] Índice a analizar. Solo "roti_l1" está científicamente
-# implementado/validado en el Step 2 - ver INDEX_CONFIG.
+# [A.2] Index to analyse. Only "roti_l1" is scientifically
+# implemented/validated in Step 2 - see INDEX_CONFIG.
 VALUE_COL = "roti_l1"
 
-# [A.2b] Criterio Ndat para las observaciones ROTI L1. Ver ndat_filter.py -
-# eq60 es el default oficial del TFM.
+# [A.2b] Ndat criterion for the ROTI L1 observations (see ndat_filter.py);
+# "eq60" is the official criterion of the study.
 NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
 
-# [A.3] Umbral de completitud usado en el Paso 1 (para localizar su CSV)
+# [A.3] Step 1 completeness threshold (used to locate its CSV)
 TH_COV = 0.75
 
-# [A.4] Percentiles a extraer
+# [A.4] Percentiles to extract
 PCTS = [90, 95, 99]
 
-# [A.5] Rango temporal de análisis
-# "all":
-# el script usa todos los días válidos y luego compara solo los meses indicados.
+# [A.5] Analysis range
+# "all": use every valid day of the year.
 ANALYSIS_MODE = "all"
 
-# Si ANALYSIS_MODE = "months", solo se usarán estos meses
+# With ANALYSIS_MODE = "months", only the valid days of these months are used
 MONTHS_TO_ANALYZE = [3, 7, 11]
 
-# [A.6] Meses que se quieren representar juntos en una misma gráfica
-# Sugerencia del profesor: Marzo, Julio y Noviembre
+# [A.6] Months drawn together in the same comparison figure
 MONTHS_TO_COMPARE = [3, 7, 11]
 
-# [A.7] Configuración de las gráficas - valores por defecto del modo
-# consola. Las funciones de plot los reciben como argumentos, no los leen
-# directamente de aquí (ver [E]).
+# [A.7] Plot settings - console defaults. The plot functions receive them
+# as arguments rather than reading them from here (see [E]).
 USE_LOG_Y = True
 X_LIM = (0, 20)
 Y_LIM = (1e-5, 1)
@@ -75,28 +71,26 @@ SAVE_INDIVIDUAL_CCDF = True
 SAVE_COMPARISON_CCDF = True
 SHOW_PLOTS = False
 
-# [A.8] Meses con menos días válidos que este valor se marcan en la gráfica
+# [A.8] Months with fewer valid days than this are flagged in the plot and
+# excluded from the min/max of the summary (low statistical support)
 MIN_VALID_DAYS_PER_MONTH = 10
 
-# [A.9] Cross-station CCDF comparison: color fijo por estación (no por
-# posición en una lista - misma motivación que month_color(), ver [E]) y
-# linestyle por mes (cicla si se piden más de 4 meses a la vez).
+# [A.9] Cross-station CCDF comparison: fixed colour per station (by name,
+# not by list position - same reason as month_color(), see [E]) and one
+# linestyle per month (cycles beyond 4 months).
 STATION_COLORS = {"UNSA": "tab:orange", "KOUG": "tab:blue", "WHIT": "tab:green", "YELL": "tab:red"}
 MONTH_LINESTYLES = ["-", "--", ":", "-."]
 
 
 # ======================================================================
-# [B] ÍNDICES: PARQUET <-> NOMBRE DE FICHERO <-> ETIQUETA CIENTÍFICA
+# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL
 # ======================================================================
-# Fuente única de verdad para cada índice disponible en el Parquet del
-# Paso 0. Evita hardcodes contradictorios (p.ej. una gráfica etiquetada
-# "ROTI L1" mostrando en realidad datos de S4).
+# Single definition of every index available in the Step 0 Parquet, so a
+# label can never disagree with the data (e.g. a "ROTI L1" plot showing S4).
 #
-# "scientifically_supported" = False significa que la columna existe en
-# el Parquet (Step 0 la conserva para extensibilidad futura) pero su
-# metodología de análisis en el Step 2 todavía no está implementada ni
-# validada - habilitarla es un cambio metodológico, no técnico
-# (CLAUDE.md sección 14).
+# "scientifically_supported" = False: the column exists in the Parquet but
+# its Step 2 analysis is not implemented/validated. Enabling it is a
+# methodological change, not a technical one.
 INDEX_CONFIG = {
     "roti_l1": {
         "parquet_column": "06_roti_l1",
@@ -123,14 +117,14 @@ INDEX_CONFIG = {
         "parquet_column": "10_s4_l1",
         "file_tag": "S4L1",
         "label": "S4 L1",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
     "s4_l2": {
         "parquet_column": "11_s4_l2",
         "file_tag": "S4L2",
         "label": "S4 L2",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
 }
@@ -138,13 +132,9 @@ INDEX_CONFIG = {
 
 def validate_index_supported(value_col: str) -> dict:
     """
-    Comprueba que value_col tiene un análisis científico de Step 2
-    implementado y validado - no solo que la columna exista en el
-    Parquet. Devuelve su entrada de INDEX_CONFIG si es válido.
-
-    Recibe value_col como argumento explícito (no lee VALUE_COL global),
-    para que sea igual de correcta llamada desde main() o desde una
-    futura app con otro índice.
+    Checks that value_col has an implemented and validated Step 2
+    analysis - not just that the column exists in the Parquet. Returns its
+    INDEX_CONFIG entry.
     """
     if value_col not in INDEX_CONFIG:
         raise ValueError(
@@ -165,7 +155,7 @@ def validate_index_supported(value_col: str) -> dict:
 
 
 # ======================================================================
-# [C] RESOLUCIÓN DE RUTAS
+# [C] PATH RESOLUTION
 # ======================================================================
 def resolve_paths(
     station: str,
@@ -178,19 +168,14 @@ def resolve_paths(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Resuelve rutas de entrada/salida a partir de los parámetros recibidos,
-    no de los globales del módulo, siguiendo el mismo patrón que
-    1-completitud.py.
+    Input/output paths, computed from the arguments received (not from
+    the module globals). Outputs go under
+    results/{STATION}/{YEAR}/2_ccdf/{VALUE_COL}/.
 
-    Salidas bajo results/{STATION}/{YEAR}/2_ccdf/{VALUE_COL}/ - Steps 0 y
-    1 no cambian (no dependen del índice).
-
-    ndat_mode=None (default) reproduce exactamente la ruta/prefix de antes
-    de que este script conociera Ndat - ningún caller existente que no
-    pase este argumento (hoy, web_server.py) ve ningún cambio de ruta.
-    Pasar un modo real ("eq60"/"ge30"/"all"/"lt30") añade un nivel más
-    (ndat_config["dir_tag"]) y etiqueta también el prefix del fichero
-    (ndat_config["file_tag"]) - mismo mecanismo que ya usa el índice.
+    ndat_mode=None: no Ndat subfolder and no Ndat tag in the file prefix.
+    A mode ("eq60"/"ge30"/"all"/"lt30") adds the ndat_config["dir_tag"]
+    subfolder and the ndat_config["file_tag"] prefix tag, so results of
+    different criteria never overwrite each other.
     """
     parquet_path = (
         project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
@@ -234,11 +219,9 @@ def resolve_paths(
 
 def individual_ccdf_png(paths: dict, doy_start: int, doy_end: int, month: int) -> Path:
     """
-    Nombre de fichero de una CCDF individual (un mes). Incluye DOY{start}_{end}
-    - antes no lo llevaba, a diferencia de output_pcts_csv /
-    output_monthly_percentiles_png, así que dos corridas con distinto rango de
-    DoY se pisaban en silencio. Única fuente de verdad usada por main() y por
-    la web, para que no puedan desincronizarse.
+    File name of a single-month CCDF. Includes DOY{start}_{end} so runs
+    with different DoY ranges do not overwrite each other. Shared by
+    main() and the web server.
     """
     doy_tag = f"DOY{doy_start}_{doy_end}"
     return paths["ccdf_dir"] / f"{paths['prefix']}_{doy_tag}_M{month:02d}_ccdf_logY.png"
@@ -246,10 +229,9 @@ def individual_ccdf_png(paths: dict, doy_start: int, doy_end: int, month: int) -
 
 def multi_ccdf_png(paths: dict, doy_start: int, doy_end: int, months: list[int]) -> Path:
     """
-    Nombre de fichero de la CCDF comparativa de varios meses. Vive en
-    ccdf_comparisons_dir, no en ccdf_dir - cada combinación de meses que se
-    pruebe genera un fichero nuevo, así que se mantiene separada de los 12
-    individuales "canónicos" (mismo patrón que monthly_percentile_variability/).
+    File name of the multi-month CCDF comparison. Stored in
+    ccdf_comparisons_dir, apart from the 12 single-month CCDFs, because
+    each month combination produces a new file.
     """
     doy_tag = f"DOY{doy_start}_{doy_end}"
     months_tag = "_".join(f"M{m:02d}" for m in sorted(months))
@@ -264,14 +246,11 @@ def resolve_cross_station_ccdf_path(
 ) -> Path:
     """
     Cross-station CCDF comparison output path - global, not scoped to one
-    station (CLAUDE.md section 3-bis). Lives under results/global/{year}/
-    2_ccdf_cross_station/, sibling to Step 2.2's 2_ccdf_comparison/ - kept
-    separate because it is a different kind of output (full CCDF curves,
-    not a percentile table/plot).
+    station: results/global/{year}/2_ccdf_cross_station/, separate from
+    Step 2.2's 2_ccdf_comparison/ (full CCDF curves, not percentile tables).
 
-    ndat_mode=None (default) reproduces exactly the path/prefix from
-    before this function knew about Ndat - same dir_tag/file_tag mechanism
-    already used by resolve_paths() in this same script.
+    ndat_mode is handled as in resolve_paths() (None: no Ndat subfolder
+    or tag).
     """
     doy_tag = f"DOY{doy_start}_{doy_end}"
     stations_tag = "_".join(sorted(stations))
@@ -291,17 +270,17 @@ def resolve_cross_station_ccdf_path(
 
 
 # ======================================================================
-# [D] FUNCIONES AUXILIARES (lógica de cálculo sin cambios)
+# [D] HELPER FUNCTIONS
 # ======================================================================
 
 def doy_to_month(year: int, doy: int) -> int:
-    """Convierte Year + DoY -> mes (1..12)."""
+    """Year + DoY -> calendar month (1..12)."""
     dt = datetime.strptime(f"{year}-{doy:03d}", "%Y-%j")
     return dt.month
 
 
 def month_label(month: int) -> str:
-    """Etiqueta simple para leyenda."""
+    """Short month name for legends and labels."""
     labels = {
         1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
         5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
@@ -317,22 +296,14 @@ def accumulate_values_by_month(
     parquet_value_col: str,
 ) -> tuple[dict, dict]:
     """
-    Agrupa los valores de parquet_value_col por mes, para los DoY en
-    valid_doys, en una sola pasada vectorizada sobre el Parquet ya
-    cargado - en vez de filtrar el DataFrame completo una vez por cada
-    DoY (hasta 366 veces).
+    Groups the values of parquet_value_col by month for the DoYs in
+    valid_doys, in a single vectorised pass. The month of each DoY comes
+    from doy_to_month().
 
-    El mes de cada DoY se obtiene con doy_to_month() (la misma función
-    que usaba la versión anterior), no de una columna del Parquet, para
-    no introducir una segunda fuente de la misma información.
-
-    Devuelve (month_values, n_days_by_month):
-    - month_values[m]: array 1D con todos los valores válidos (no-NaN)
-      de ese mes, equivalente a concatenar los arrays por día de la
-      versión anterior.
-    - n_days_by_month[m]: número de DoY distintos que aportaron al menos
-      un valor válido ese mes - equivalente a contar cuántos días
-      añadieron un array no vacío en la versión anterior.
+    Returns (month_values, n_days_by_month):
+    - month_values[m]: 1D array with every non-NaN value of that month;
+    - n_days_by_month[m]: number of distinct DoYs that contributed at
+      least one non-NaN value that month.
     """
     doy_to_month_map = {doy: doy_to_month(year, doy) for doy in valid_doys}
 
@@ -363,13 +334,11 @@ def accumulate_values_by_month(
 
 def compute_ccdf(values: np.ndarray):
     """
-    Calcula la CCDF empírica.
-
-    Se usa:
+    Empirical CCDF:
         CCDF(x_i) ≈ P(X >= x_i) = (n - i + 1) / n
 
-    Esta definición es más adecuada para escala logarítmica porque la CCDF
-    no llega exactamente a cero.
+    With this definition the CCDF never reaches exactly zero, which suits
+    a logarithmic y-axis.
     """
     x = np.sort(values)
     n = x.size
@@ -384,23 +353,20 @@ def compute_ccdf(values: np.ndarray):
 
 
 def format_n(n: int) -> str:
-    """Formato simple para número de muestras."""
+    """Sample count with "." as thousands separator."""
     return f"{n:,}".replace(",", ".")
 
 
 # ======================================================================
-# [E] FUNCIONES DE PLOT (lógica de dibujo sin cambios; use_log_y/x_lim/
-# y_lim/show_plot llegan como argumentos con los globales como valor por
-# defecto, en vez de leerse directamente dentro de la función)
+# [E] PLOT FUNCTIONS (use_log_y/x_lim/y_lim/show_plot are arguments, with
+# the console globals as defaults)
 # ======================================================================
 
 def month_color(month: int):
     """
-    Color fijo por mes calendario (1-12), constante sin importar qué otros
-    meses se estén comparando en la misma figura - así el mismo mes se lee
-    con el mismo color en dos comparaciones distintas. Muestreado de un
-    colormap cíclico (twilight) para que además el color siga la
-    progresión estacional del año.
+    Fixed colour per calendar month (1-12), independent of the other
+    months in the figure, so a month keeps its colour across comparisons.
+    Sampled from a cyclic colormap (twilight) to follow the seasonal cycle.
     """
     cmap = plt.get_cmap("twilight")
     return cmap((month - 1) / 12)
@@ -422,12 +388,8 @@ def save_ccdf_plot(
     show_plot: bool = SHOW_PLOTS
 ):
     """
-    Guarda la CCDF individual de un mes.
-
-    Mejoras aplicadas:
-    - eje Y logarítmico
-    - eje X acotado
-    - líneas de referencia para p90 y p99
+    Saves the CCDF of a single month, with reference lines at
+    CCDF = 0.1 (p90) and 0.01 (p99).
     """
     plt.figure(figsize=(8, 5))
 
@@ -445,7 +407,7 @@ def save_ccdf_plot(
     plt.xlim(x_lim)
     plt.ylim(y_lim)
 
-    # Líneas de referencia para percentiles
+    # Percentile reference lines
     plt.axhline(0.1, linestyle="--", linewidth=0.9, alpha=0.7, label="CCDF=0.1 (p90)")
     plt.axhline(0.01, linestyle="--", linewidth=0.9, alpha=0.7, label="CCDF=0.01 (p99)")
 
@@ -480,13 +442,9 @@ def save_multi_ccdf_plot(
     show_plot: bool = SHOW_PLOTS
 ):
     """
-    Guarda una figura con varias CCDF superpuestas.
-
-    Esta es la gráfica más importante para enviar al profesor:
-    - varias curvas en la misma figura
-    - eje Y logarítmico
-    - eje X limitado a [0, 20]
-    - líneas horizontales para p90 y p99
+    Saves several monthly CCDFs overlaid in one figure, with each month's
+    p90/p99 marked on its own curve and reference lines at CCDF = 0.1 and
+    0.01.
     """
     plt.figure(figsize=(9, 6))
 
@@ -509,10 +467,7 @@ def save_multi_ccdf_plot(
             label=label
         )
 
-        # Marcar p90 y p99 sobre la curva - mismo color que su propia linea,
-        # para que el marcador se pueda atribuir a su mes sin ambigüedad
-        # (antes venían del ciclo de color automático, no coincidían con
-        # la línea de su propio mes).
+        # p90/p99 markers in the colour of their own month's curve.
         if month in pcts_by_month:
             p90 = pcts_by_month[month].get("p90", np.nan)
             p99 = pcts_by_month[month].get("p99", np.nan)
@@ -531,7 +486,7 @@ def save_multi_ccdf_plot(
     plt.xlim(x_lim)
     plt.ylim(y_lim)
 
-    # Referencias de percentil en CCDF
+    # Percentile reference lines
     plt.axhline(0.1, linestyle="--", linewidth=1.0, alpha=0.7)
     plt.axhline(0.01, linestyle="--", linewidth=1.0, alpha=0.7)
 
@@ -577,12 +532,9 @@ def save_cross_station_ccdf_plot(
     here several stations are compared for the same month(s).
 
     ccdf_by_station_month: {station: {month: (x_sorted, ccdf, n_values)}}.
-    Color is fixed per station (STATION_COLORS - by identity, not by
-    position, same motivation as month_color()). Linestyle is fixed per
-    month (MONTH_LINESTYLES, cycles past 4 months). No low-support marker,
-    same as save_multi_ccdf_plot - the n= in the legend already carries
-    that for CCDF-curve views (the red-X marking belongs to the percentile
-    summary views instead).
+    Colour is fixed per station (STATION_COLORS), linestyle per month
+    (MONTH_LINESTYLES, cycling beyond 4 months). The sample size is given
+    as n= in the legend; there is no separate low-support marker.
     """
     plt.figure(figsize=(9, 6))
 
@@ -609,9 +561,7 @@ def save_cross_station_ccdf_plot(
     plt.xlim(x_lim)
     plt.ylim(y_lim)
 
-    # Líneas de referencia neutras (gris) - con color de estación variable
-    # y numero de curvas variable, no deben competir por un color del ciclo
-    # automático que podría coincidir con alguna estación.
+    # Grey reference lines, so they cannot share a colour with a station.
     plt.axhline(0.1, linestyle="--", linewidth=1.0, alpha=0.7, color="gray")
     plt.axhline(0.01, linestyle="--", linewidth=1.0, alpha=0.7, color="gray")
     plt.text(x_lim[0] + 0.2, 0.105, "CCDF = 0.1 (p90)", va="bottom")
@@ -648,17 +598,11 @@ def save_monthly_percentiles_plot(
     show_plot: bool = SHOW_PLOTS
 ):
     """
-    Genera la gráfica de evolución mensual de los percentiles p90 y p99.
+    Plots the monthly p90 and p99 values over the year.
 
-    Eje X:
-        Meses del año.
-
-    Eje Y:
-        Valor mensual del percentil.
-
-    Los meses con pocos días válidos se mantienen en la figura, pero se
-    identifican mediante una anotación para evitar interpretarlos como
-    representativos de todo el mes.
+    Months with fewer than min_valid_days valid days stay in the figure
+    but are annotated with their n_days, so they are not read as
+    representative of the whole month.
     """
 
     required_columns = {
@@ -676,14 +620,14 @@ def save_monthly_percentiles_plot(
             f"Faltan las columnas: {sorted(missing_columns)}"
         )
 
-    # Copia ordenada para no modificar el DataFrame original
+    # Sorted copy; the caller's DataFrame is not modified
     df_plot = (
         df_pcts.copy()
         .sort_values("month")
         .reset_index(drop=True)
     )
 
-    # Excluir únicamente meses completamente vacíos
+    # Drop only months without data
     df_plot = df_plot[
         (df_plot["n_days"] > 0)
         & df_plot["p90"].notna()
@@ -699,7 +643,7 @@ def save_monthly_percentiles_plot(
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Evolución mensual de los percentiles
+    # Monthly percentile series
     ax.plot(
         df_plot["month"],
         df_plot["p90"],
@@ -716,7 +660,7 @@ def save_monthly_percentiles_plot(
         label="p99"
     )
 
-    # Marcar los meses con pocos días válidos
+    # Annotate months with few valid days
     low_coverage_months = df_plot[
         df_plot["n_days"] < min_valid_days
     ]
@@ -780,7 +724,7 @@ def save_monthly_percentiles_plot(
 
 
 # ======================================================================
-# [F] CÁLCULO CIENTÍFICO DE ALTO NIVEL (sin prints ni I/O de salida)
+# [F] SCIENTIFIC CALCULATION (no prints, no output files)
 # ======================================================================
 def run_ccdf_analysis(
     station: str = STATION,
@@ -795,42 +739,25 @@ def run_ccdf_analysis(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Calcula percentiles mensuales y CCDF de value_col para una estación,
-    año y rango de DoY.
+    Monthly percentiles and CCDFs of value_col for one station, year and
+    DoY range. Pure calculation: every input is an argument, nothing is
+    printed or written.
 
-    Orquesta exactamente el mismo cálculo que hacía antes el código suelto
-    a nivel de módulo (misma selección de días válidos del Step 1, mismo
-    agrupado por mes vía accumulate_values_by_month(), misma fórmula de
-    percentiles y CCDF) - no es un cálculo científico nuevo, solo queda
-    encapsulado en una función parametrizada y reutilizable en vez de
-    código de módulo.
+    Days: the Step 1 valid days (optionally restricted to
+    months_to_analyze). Observations: with a ndat_mode, only the rows of
+    those days that satisfy ndat_filter.apply_ndat_filter(); the valid
+    days themselves do not depend on Ndat. ndat_mode=None applies no Ndat
+    filter.
 
-    No imprime nada ni guarda ningún fichero - función de cálculo pura,
-    reutilizable igual desde main() (consola) o desde una futura
-    aplicación. Todos los parámetros de entrada llegan como argumentos;
-    no se lee STATION/YEAR/VALUE_COL/etc. directamente del módulo dentro
-    de esta función.
+    Raises FileNotFoundError if the Step 0 Parquet or the Step 1 coverage
+    CSV is missing, and ValueError if value_col is not scientifically
+    supported (see validate_index_supported).
 
-    Lanza FileNotFoundError si falta el Parquet del Step 0 o el CSV de
-    completitud del Step 1, y ValueError si value_col no está
-    científicamente soportado (ver validate_index_supported).
-
-    ndat_mode=None (default) es el comportamiento legacy: ninguna fila se
-    descarta por Ndat, idéntico a antes de que este script conociera
-    ndat_filter - así cualquier caller que todavía no pase este argumento
-    (hoy, web_server.py) no ve ningún cambio. Con un modo real
-    ("eq60"/"ge30"/"all"/"lt30"), las observaciones se restringen vía
-    ndat_filter.apply_ndat_filter() antes de agrupar por mes - los días
-    válidos siguen siendo exactamente los de Step 1 (valid_doys no
-    depende de Ndat), el filtro solo actúa sobre las filas dentro de esos
-    días.
-
-    Devuelve un dict con:
-      - "index_config": entrada de INDEX_CONFIG para value_col;
-      - "ndat_config": entrada de NDAT_MODES para ndat_mode, o None si
-        ndat_mode is None;
-      - "valid_doys": lista de DoY usados en el análisis;
-      - "df_pcts": DataFrame con month, n_days, n_values, p{pct}...;
+    Returns a dict with:
+      - "index_config": INDEX_CONFIG entry of value_col;
+      - "ndat_config": NDAT_MODES entry of ndat_mode, or None;
+      - "valid_doys": DoYs used in the analysis;
+      - "df_pcts": DataFrame with month, n_days, n_values, p{pct}...;
       - "ccdf_by_month": {month: (x_sorted, ccdf, n_values)};
       - "pcts_by_month": {month: {"p90": ..., "p99": ...}}.
     """
@@ -927,39 +854,27 @@ def run_ccdf_analysis(
 
 
 # ======================================================================
-# [G] RESUMEN COMPARATIVO (derivado de df_pcts, sin prints ni I/O)
+# [G] SUMMARY (derived from df_pcts, no prints, no I/O)
 # ======================================================================
 def compute_ccdf_summary(
     df_pcts: pd.DataFrame,
     min_valid_days: int = MIN_VALID_DAYS_PER_MONTH,
 ) -> dict:
     """
-    Deriva estadísticas de comparación a partir de la tabla mensual de
-    percentiles que ya devuelve run_ccdf_analysis() - no recalcula ningún
-    percentil, solo resume df_pcts (mismo criterio que
-    compute_completeness_summary() en 1-completitud.py).
+    Comparison statistics derived from the monthly percentile table of
+    run_ccdf_analysis(); no percentile is recomputed. Pure function.
 
-    Para p90 y p99 por separado, el mínimo/máximo se calcula solo sobre
-    meses con n_days >= min_valid_days ("fiables") - un mínimo/máximo
-    basado en un mes de 1 día no es tan fiable como uno basado en 30, y
-    dejarlo entrar en el resumen puede llevar a una lectura errónea
-    (decisión metodológica explícita, ver conversación/CLAUDE.md §14, no
-    un cambio silencioso). Esto NO afecta a los datos de origen: la
-    gráfica (save_monthly_percentiles_plot) y el CSV siguen mostrando los
-    12 meses tal cual, con su propia anotación de baja muestra - la
-    exclusión ocurre solo dentro de este resumen derivado.
+    For p90 and p99 separately, the min/max month is taken only among
+    months with n_days >= min_valid_days, because an extreme based on a
+    few days is not reliable. The CSV and the plot still show all 12
+    months; the exclusion applies only to this summary.
 
-    Si el mes con el valor crudo mínimo/máximo (sobre todos los meses)
-    queda excluido por baja muestra, se registra en
-    {col}_min_excluded / {col}_max_excluded (mes, valor y n_days de ese
-    mes excluido; None si no hubo exclusión) - así el dato no desaparece,
-    solo se explica por qué no es el que encabeza el resumen.
+    If the raw min/max month (over all months) is excluded for low
+    support, it is reported in {col}_min_excluded / {col}_max_excluded
+    (month, value, n_days; None otherwise).
 
-    Caso límite: si ningún mes del año llega al umbral, se usan los
-    valores crudos igualmente (mejor eso que fallar o devolver un
-    resumen vacío) y se marca {col}_all_months_low_support = True.
-
-    Pura: sin prints ni escritura de ficheros.
+    If no month reaches min_valid_days, the raw values are used and
+    {col}_all_months_low_support is set to True.
     """
     summary = {}
     reliable = df_pcts[df_pcts["n_days"] >= min_valid_days]
@@ -1006,7 +921,7 @@ def compute_ccdf_summary(
 
 
 # ======================================================================
-# [H] MAIN (modo consola): orquesta el cálculo + guarda CSV/PNG/consola
+# [H] MAIN (console mode): calculation + CSV/PNG outputs + console report
 # ======================================================================
 def main() -> None:
     results = run_ccdf_analysis(
@@ -1047,7 +962,7 @@ def main() -> None:
     paths["percentile_dir"].mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # Guardar CCDF individuales
+    # Single-month CCDFs
     # ------------------------------------------------------------------
     if SAVE_INDIVIDUAL_CCDF:
         for m in sorted(ccdf_by_month):
@@ -1060,7 +975,7 @@ def main() -> None:
             print(f"CCDF individual guardada en {out_png}")
 
     # ------------------------------------------------------------------
-    # Guardar gráfica comparativa de varios meses
+    # Multi-month CCDF comparison
     # ------------------------------------------------------------------
     if SAVE_COMPARISON_CCDF:
         out_multi_png = multi_ccdf_png(paths, DOY_START, DOY_END, MONTHS_TO_COMPARE)
@@ -1081,7 +996,7 @@ def main() -> None:
         print(f"\nCCDF comparativa guardada en {out_multi_png}")
 
     # ------------------------------------------------------------------
-    # Guardar tabla de percentiles
+    # Monthly percentile table
     # ------------------------------------------------------------------
     print("\nTabla mensual de percentiles:")
     print(df_pcts)
@@ -1090,7 +1005,7 @@ def main() -> None:
     print(f"\nPercentiles guardados en {paths['output_pcts_csv']}")
 
     # ------------------------------------------------------------------
-    # Gráfica de variabilidad mensual de p90 y p99
+    # Monthly p90/p99 variability plot
     # ------------------------------------------------------------------
     save_monthly_percentiles_plot(
         df_pcts=df_pcts,

@@ -35,18 +35,15 @@ RESULTS_DIR = project_paths.RESULTS_ROOT  # <project>/results, whatever the CWD
 DOY_START = 1
 DOY_END = 366  # 2024 is a leap year
 
-# Station selection.
-# CONSOLE DEFAULTS - used only when this script is run directly. In web mode,
-# web_server.py temporarily replaces SELECTED_STATIONS and STATION_UTC_OFFSETS
-# with the contents of app/stations.json (this script never reads that file).
-# Not accidental duplication: keep them.
+# Station selection - console defaults. In web mode, web_server.py temporarily
+# replaces SELECTED_STATIONS and STATION_UTC_OFFSETS with app/stations.json
+# (this script never reads that file), so the duplication is intentional.
 USE_SELECTED_STATIONS = True
 SELECTED_STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 
-# Fixed manual UTC offsets, used ONLY to derive hour_local/month_local.
-# These are NOT dynamic civil timezones - no daylight-saving changes are
-# applied, on purpose, so "local time" stays physically consistent across
-# the whole year for every station.
+# Fixed UTC offsets, used ONLY to derive hour_local/month_local. Local time is
+# a fixed-offset clock time, not a civil time zone (no daylight saving, so it
+# is consistent across the year) and not magnetic local time.
 #   UNSA (Salta, Argentina): UTC-3 year-round, no DST since 2009.
 #   KOUG (Kourou, French Guiana): UTC-3 year-round, no DST.
 #   WHIT (Whitehorse, Yukon): UTC-7 year-round since Yukon adopted permanent
@@ -91,19 +88,9 @@ def station_parquet_path(station: str) -> Path:
 def resolve_global_paths(year: int) -> dict:
     """
     Per-year global (multi-station) output paths: results/global/{year}/...
-    `year` is a required, explicit argument - never read from the YEAR
-    global - so this returns correct paths even when called after a caller
-    has patched and then restored module-level YEAR (e.g. web_server.py's
-    _patched_globals, used to run this script's unmodified main() from the
-    web UI). Same "computed from the arguments received, not the module
-    globals" rule as every resolve_paths() in Steps 1-6 (CLAUDE.md section
-    11). Previously GLOBAL_DIR/OUTPUT_INVENTORY_CSV/OUTPUT_STATION_SUMMARY_CSV
-    were plain module-level constants, computed once from the literal
-    YEAR=2024 default at import time - correct for a single console run,
-    silently stale for any second main() call in the same process with a
-    different YEAR. Technical fix only (CLAUDE.md section 14): identical
-    paths for the existing YEAR=2024 console case, correct paths for any
-    other year.
+    `year` is passed explicitly instead of being read from the YEAR global,
+    so the paths stay correct when web_server.py runs main() with temporarily
+    patched module globals.
     """
     global_dir = RESULTS_DIR / "global" / str(year)
     global_dir.mkdir(parents=True, exist_ok=True)
@@ -117,11 +104,9 @@ def resolve_global_paths(year: int) -> dict:
 # ======================================================================
 # [B] RAW COLUMN DEFINITION - DO NOT TOUCH
 # ======================================================================
-# NOTE: this assumes every RAW file has exactly these 12 whitespace
-# separated columns, which holds for 100% of the files in datos_Estudio at
-# the time this script was written. A future file with fewer columns would
-# fail to parse and be logged as a read_error in the inventory rather than
-# silently misaligning data.
+# Every RAW file is expected to have exactly these 12 whitespace-separated
+# columns. The column count is not validated: a row with fewer fields is read
+# with NaN in the missing columns, and extra fields would shift the data.
 
 RAW_COLS = [
     "01_sec_of_day",
@@ -181,8 +166,8 @@ def resolve_raw_file(data_dir: Path, year: int, doy: int) -> tuple[Path, list[Pa
     2. Only when none exists: any other file whose name holds YYYYDDD in an
        accepted format (is_generic_raw_name), e.g. "roti.2025120.gz". If
        more than one does, nothing is chosen: AmbiguousRawFileError.
-    When nothing matches the preferred plain name is returned, so the day
-    keeps being reported as "missing_file" exactly as before.
+    When nothing matches, the preferred plain name is returned and the day
+    is reported as "missing_file".
     """
     day_id = f"{year}{doy:03d}"
     base = data_dir / f"{RAW_PREFERRED_PREFIX}{day_id}"
@@ -542,8 +527,7 @@ def main() -> None:
             "utc_offset_hours": offset,
             "longitude_deg": meta.get("longitude_deg", np.nan),
             "latitude_deg": meta.get("latitude_deg", np.nan),
-            # Relative to the project root (results\<ST>\...), as before
-            # results/ was anchored: no machine-specific absolute path in the CSV.
+            # Relative to the project root, so the CSV holds no machine-specific path.
             "parquet_file": str(out_path.relative_to(project_paths.PROJECT_ROOT)),
         })
 

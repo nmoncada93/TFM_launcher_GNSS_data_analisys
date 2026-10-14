@@ -4,38 +4,22 @@
 """
 Step 2.2 - Cross-station comparison of Step 2 monthly percentiles.
 
-Reads the monthly_percentiles.csv that 2-ccdf.py already saves for each
-station and merges them into one comparison table and one combined plot.
-Does not recompute anything and never touches the Step 0 Parquet - it
-only reads what 2-ccdf.py has already produced per station. All four
-stations were run with the same default parameters in this project, so
-re-deriving the numbers here would only add cost, not correctness.
+Reads the monthly_percentiles.csv saved by 2-ccdf.py for each station and
+merges them into one comparison table (CSV) and one combined plot (PNG).
+Nothing is recomputed and the Step 0 Parquet is not read. A station
+without Step 2 output is skipped and reported, not fatal.
 
-A station whose Step 2 has not been run yet is skipped, not fatal -
-comparing a partial set of stations is an expected, normal case, not an
-error.
+n_days/n_values are carried over per station-month, so low-support months
+(few valid days behind a percentile) are visible in the table and flagged
+in the plot.
 
-Also carries over n_days/n_values per station-month (not just p90/p99),
-so a low-support month (few valid days behind that percentile) is
-visible in the table and flagged in the plot instead of requiring a
-manual check - this project already has one such case (UNSA, August,
-n_days=1). And cross-checks that every compared station has a Step 1
-coverage CSV matching this script's own th_cov: Step 2's own filename
-does not encode th_cov (unlike Step 1's), so nothing before this
-prevented silently comparing stations run with different coverage
-thresholds. This cross-check is a best-effort sanity check, not a
-guarantee - it confirms a matching Step 1 file exists, not that Step 2
-itself was generated with that same threshold. A fully reliable check
-would need th_cov stored inside Step 2's own output, which is a change
-to 2-ccdf.py, not to this script - left for later, not needed now.
+th_cov check: Step 2 output names do not encode th_cov, so this script can
+only check that each compared station has a Step 1 coverage CSV for the
+same th_cov. It is a best-effort check: it confirms that such a Step 1
+file exists, not that Step 2 was generated from it.
 
 Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported() (CLAUDE.md section 3-bis).
-
-Purpose: a fast, agile cross-station view (one CSV + one PNG) meant to
-be read directly or handed to an AI assistant for interpretation help -
-not the final LaTeX-formatted output. That is a separate, later step
-built on top of these same files, not a redesign of them.
+INDEX_CONFIG / validate_index_supported().
 """
 
 import calendar
@@ -65,8 +49,8 @@ TH_COV = 0.75
 # Index to compare. Only "roti_l1" is scientifically implemented/validated.
 VALUE_COL = "roti_l1"
 
-# Ndat criterion to compare across stations. See ndat_filter.py - eq60 is
-# the TFM official default.
+# Ndat criterion to compare across stations (see ndat_filter.py); "eq60"
+# is the official criterion of the study.
 NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
 
 # Same threshold 2-ccdf.py already uses for its own "few valid days"
@@ -85,9 +69,7 @@ PLOT_DPI = 250
 # ======================================================================
 # [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL <-> UNIT
 # ======================================================================
-# Same copy already used by 1-completitud.py through 6-month_hour_heatmaps.py
-# (established convention: each script is self-contained, no shared
-# config module yet).
+# Same index definitions as in Steps 2-6 (each script is self-contained).
 
 INDEX_CONFIG = {
     "roti_l1": {
@@ -131,9 +113,7 @@ INDEX_CONFIG = {
 def validate_index_supported(value_col: str) -> dict:
     """
     Same check as 2-ccdf.py: value_col must have a validated Step 2
-    scientific analysis, not just exist as a Parquet column. Receives
-    value_col explicitly so it works the same from main() or a future
-    caller with a different index.
+    scientific analysis, not just exist as a Parquet column.
     """
     if value_col not in INDEX_CONFIG:
         raise ValueError(
@@ -166,18 +146,10 @@ def resolve_station_pcts_csv(
     ndat_mode: str | None = None,
 ) -> Path:
     """
-    Path to the monthly_percentiles.csv that 2-ccdf.py already saves for
-    one station. Mirrors 2-ccdf.py's own resolve_paths() naming exactly -
-    not re-derived independently, so a naming change there is the only
-    place this would need to follow.
-
-    ndat_mode=None (default) reproduces exactly the path/prefix from
-    before this script knew about Ndat - no existing caller that does not
-    pass this argument (today, web_server.py) sees any path change. A
-    real mode ("eq60"/"ge30"/"all"/"lt30") adds one more directory level
-    (ndat_config["dir_tag"]) and tags the filename too
-    (ndat_config["file_tag"]) - same mechanism 2-ccdf.py's resolve_paths()
-    already uses.
+    Path to the monthly_percentiles.csv saved by 2-ccdf.py for one
+    station. Mirrors the naming of 2-ccdf.py's resolve_paths(), including
+    ndat_mode (None: untagged; a mode: dir_tag subfolder and file_tag
+    prefix tag).
     """
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "2_ccdf" / value_col
 
@@ -213,16 +185,10 @@ def resolve_comparison_paths(
     year: int, value_col: str, index_config: dict, ndat_mode: str | None = None,
 ) -> dict:
     """
-    Output paths for the comparison itself, under results/global/{YEAR}/ -
-    same convention 0-toParquet.py already uses for cross-station files,
-    never inside a single station's own folder.
-
-    ndat_mode=None (default) reproduces exactly today's path (flat, no
-    index or Ndat directory level - this global path never nested by
-    index before Ndat existed). A real mode adds *both* a value_col level
-    and an ndat_config["dir_tag"] level at once, atomically, only in this
-    branch - the legacy branch above is untouched, so this is additive,
-    not a restructuring of the existing path.
+    Output paths of the comparison, under results/global/{YEAR}/ (never
+    inside a station folder). ndat_mode=None: directly in
+    2_ccdf_comparison/; a mode adds the value_col and ndat_config["dir_tag"]
+    subfolders.
     """
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "2_ccdf_comparison"
 
@@ -258,22 +224,15 @@ def run_ccdf_comparison(
     station and merges n_days/n_values/p90/p99 into one wide table: one
     row per month, one column group per available station.
 
-    Pure function: no prints, no file writes, so it behaves the same
-    from main() (console mode) or from a future caller. Raises
-    ValueError if value_col is not scientifically supported (see
-    validate_index_supported). Raises FileNotFoundError only if none of
-    the requested stations have Step 2 output yet - a partial set is a
-    normal, expected result, not an error.
+    Pure function: no prints, no file writes. Raises ValueError if
+    value_col is not scientifically supported, and FileNotFoundError only
+    if no requested station has Step 2 output (a partial set is a normal
+    result).
 
-    ndat_mode=None (default) is the legacy behaviour: reads each
-    station's flat, un-tagged CSV, unchanged from before this script knew
-    about Ndat - so a caller that does not pass this argument (today,
-    web_server.py) is unaffected. With a real mode, each station's CSV is
-    looked up under that exact Ndat directory/tag (resolve_station_pcts_csv)
-    - there is no fallback to another mode or to the legacy path if it is
-    missing: a station missing its Ndat-specific output is reported in
-    missing_stations with the Ndat-tagged path that was actually checked,
-    exactly like any other missing station.
+    Each station's CSV is looked up for exactly the given ndat_mode
+    (None: untagged path). There is no fallback to another mode: a
+    station without that output is reported in missing_stations with the
+    path that was checked.
     """
     index_config = validate_index_supported(value_col)
     ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None

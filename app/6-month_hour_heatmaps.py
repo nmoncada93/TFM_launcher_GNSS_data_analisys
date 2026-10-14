@@ -4,26 +4,22 @@
 """
 Step 6 - Month-hour heatmaps of threshold exceedances.
 
-Purpose
--------
-This script analyses when annual threshold exceedances occur as a
-function of month and local hour.
+Analyses when the annual threshold exceedances occur as a function of
+month and local hour.
 
-Reads from the Step 0 Parquet, the Step 1 coverage CSV and the Step 3
-annual-thresholds CSV, following the same philosophy as Steps 1-5
-(CLAUDE.md section 11). Filters to the Step 1 valid days itself, same
-reason as Step 5: the Step 0 Parquet contains all 366 days, not only the
-valid ones, unlike the Step 4 "prepared" Parquet this script used to read
-(which no longer exists - see Steps 3-4).
+Inputs: the Step 0 Parquet, the Step 1 coverage CSV and the Step 3
+annual-thresholds CSV. Outputs under
+results/{STATION}/{YEAR}/6_month_hour_heatmaps/{INDEX}/. Globals in section
+[A] are console defaults; main() is the entry point (web_server.py runs it
+with patched globals).
 
-Also drops the "fall back to month_utc if month_local is missing" branch
-and the candidate-path lookups: both existed to tolerate uncertainty from
-earlier, inconsistent output-naming iterations. The Step 0 Parquet always
-has 19_month_local and deterministic paths, so neither case can happen
-anymore.
+Observations: those of the Step 1 valid days, then the Ndat criterion.
+Exceedances are counted against the station's own annual p90/p99 from
+Step 3. Month and hour are the Step 0 fixed-offset local columns
+(19_month_local, 18_hour_local).
 
 Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported() (CLAUDE.md section 3-bis).
+INDEX_CONFIG / validate_index_supported().
 
 Main outputs
 ------------
@@ -31,9 +27,7 @@ Main outputs
 2) Heatmap of p90 exceedance frequency by month and local hour.
 3) Heatmap of p99 exceedance frequency by month and local hour.
 4) Optional support heatmap showing the number of observations per cell.
-
-The month-hour calculation and the plotting code are otherwise unchanged
-from the validated version.
+5) Top-N cells CSVs for p90 and p99.
 """
 
 from pathlib import Path
@@ -53,36 +47,25 @@ import project_paths
 # [A.1] Study case
 STATION = "YELL"
 
-# Used only by get_cross_station_maxima() (cross-station summary view, not a
-# Step 6.2 comparator - Step 6 has none). STATION above remains the single-
-# station default for main()/console mode, unchanged. No shared "stations"
-# module exists in this project (verified: 2.2/3.2/4.2/5.2 each keep their
-# own independent copy of this exact list) - this mirrors that established
-# convention rather than introducing a new shared dependency.
-# CONSOLE DEFAULT - used only when this script is run directly. In web mode,
-# web_server.py passes the station list from app/stations.json instead
-# (this script never reads that file). Not accidental duplication: keep it.
+# Study stations for the cross-station maxima (get_cross_station_maxima()),
+# which receives the station list as an argument; main() does not use it.
+# In web mode, web_server.py passes the list from app/stations.json (this
+# script never reads that file). STATION above is the single-station default.
 STATIONS = ["UNSA", "KOUG", "WHIT", "YELL"]
 
 YEAR = 2024
 DOY_START = 1
 DOY_END = 366
 
-# Índice a analizar. Solo "roti_l1" está científicamente
-# implementado/validado - ver INDEX_CONFIG.
+# Index to analyse. Only "roti_l1" is scientifically
+# implemented/validated - see INDEX_CONFIG.
 VALUE_COL = "roti_l1"
 
-# Criterio Ndat. IMPORTANTE: a diferencia de 2-ccdf.py / 3-temporal_variability.py,
-# aquí el default NO es ndat_filter.NDAT_DEFAULT_MODE ("eq60"). main() no tiene
-# función pura equivalente (CLAUDE.md sección 11, "adapt only") y web_server.py
-# llama a main() directamente vía _patched_globals sin parchear NDAT_MODE - si el
-# default fuera "eq60", la web empezaría a exigir/usar Ndat=60 sin que nadie lo
-# pidiera. NDAT_MODE=None aquí es una solución TEMPORAL de compatibilidad con la
-# web legacy, no el default científico del TFM - los outputs oficiales se generan
-# explícitamente con ndat_mode="eq60" (vía _patched_globals o edición manual de
-# esta variable). Revisar/eliminar esta excepción cuando la web se migre a un
-# selector de Ndat. Mismo criterio ya aplicado en 4-hourly_variability.py /
-# 5-daypart_variability.py.
+# Ndat criterion. Console default None = no Ndat filter: outputs go to the
+# untagged folder, and the Step 3 thresholds are read from the untagged
+# folder too. This differs from Steps 2-3, whose default is "eq60". The web
+# interface passes the selected mode explicitly. The official results use
+# "eq60"; set NDAT_MODE = "eq60" to reproduce them from the console.
 NDAT_MODE = None
 
 TH_COV = 0.75
@@ -92,14 +75,14 @@ TH_COV = 0.75
 TOP_N_CELLS = 10
 
 # [A.2] Month-hour grouping columns
-# Default: month_local × hour_local, para ser consistente con los Pasos
-# 4 y 5. Ambas columnas vienen siempre del Parquet del Paso 0.
+# Default: month_local × hour_local, consistent with Steps 4 and 5. Both
+# columns come from the Step 0 Parquet.
 MONTH_COL = "month_local"
 HOUR_COL = "hour_local"
 DAY_COUNT_COL = "doy_utc"
 
-# Nombres reales de esas mismas columnas en el Parquet del Paso 0,
-# mapeados a los nombres cortos de arriba al cargar los datos.
+# Names of the same columns in the Step 0 Parquet, renamed to the short
+# names above when the data are loaded.
 DAY_COUNT_COL_RAW = "14_doy_utc"
 MONTH_COL_RAW = "19_month_local"
 HOUR_COL_RAW = "18_hour_local"
@@ -122,10 +105,10 @@ MONTH_LABELS = [
 
 
 # ======================================================================
-# [B] ÍNDICES: PARQUET <-> NOMBRE DE FICHERO <-> ETIQUETA CIENTÍFICA
+# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL
 # ======================================================================
-# Misma fuente única de verdad que en 2-ccdf.py / 3-temporal_variability.py
-# / 4-hourly_variability.py / 5-daypart_variability.py (CLAUDE.md §3-bis).
+# Same index definitions as in 2-ccdf.py / 3-temporal_variability.py
+# / 4-hourly_variability.py / 5-daypart_variability.py.
 INDEX_CONFIG = {
     "roti_l1": {
         "parquet_column": "06_roti_l1",
@@ -152,14 +135,14 @@ INDEX_CONFIG = {
         "parquet_column": "10_s4_l1",
         "file_tag": "S4L1",
         "label": "S4 L1",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
     "s4_l2": {
         "parquet_column": "11_s4_l2",
         "file_tag": "S4L2",
         "label": "S4 L2",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
 }
@@ -167,8 +150,9 @@ INDEX_CONFIG = {
 
 def validate_index_supported(value_col: str) -> dict:
     """
-    Comprueba que value_col tiene un análisis científico implementado y
-    validado - no solo que la columna exista en el Parquet.
+    Checks that value_col has an implemented and validated analysis - not
+    just that the column exists in the Parquet. Returns its INDEX_CONFIG
+    entry.
     """
     if value_col not in INDEX_CONFIG:
         raise ValueError(
@@ -188,7 +172,7 @@ def validate_index_supported(value_col: str) -> dict:
 
 
 # ======================================================================
-# [C] RESOLUCIÓN DE RUTAS
+# [C] PATH RESOLUTION
 # ======================================================================
 def resolve_paths(
     station: str,
@@ -201,17 +185,13 @@ def resolve_paths(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Resuelve rutas de entrada/salida a partir de los parámetros recibidos.
+    Input/output paths, computed from the arguments received.
 
-    ndat_mode=None (default) reproduce exactamente la ruta/prefix de antes de
-    que este script conociera Ndat, tanto para lo que escribe Step 6 como para
-    dónde busca el Step 3 del que depende - ningún caller existente que no
-    pase este argumento (hoy, web_server.py y main() con su default) ve ningún
-    cambio de ruta. Un modo real ("eq60"/"ge30"/"all"/"lt30") se aplica a la
-    vez a ambas resoluciones (lectura de Step 3 y escritura de Step 6) con el
-    mismo ndat_config - mismo mecanismo ya validado en
-    3-temporal_variability.py / 4-hourly_variability.py /
-    5-daypart_variability.py::resolve_paths().
+    The same ndat_mode selects both the Step 3 folder the thresholds are
+    read from and the Step 6 output folder, so thresholds of one Ndat
+    criterion are never combined with observations filtered by another.
+    ndat_mode=None: untagged folders and prefixes; a mode adds its
+    dir_tag subfolder and file_tag prefix tag.
     """
     parquet_path = (
         project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
@@ -327,24 +307,13 @@ def load_prepared_dataset(
 ) -> pd.DataFrame:
     """
     Loads doy_utc/month_local/hour_local/value_col from the Step 0
-    Parquet, filtered to the valid days from Step 1.
+    Parquet, restricted to the Step 1 valid days (the Step 0 Parquet
+    contains every day).
 
-    Unlike the previous version (which read an already-filtered "prepared"
-    Parquet from Step 4, with a fallback to month_utc if month_local was
-    missing), the Step 0 Parquet always has month_local and contains all
-    366 days - so the valid-day filter now happens here explicitly, and
-    the fallback branch is no longer needed.
-
-    ndat_mode=None (default) is the legacy behaviour: no row is discarded
-    by Ndat. With a real mode, observations are restricted via
-    ndat_filter.apply_ndat_filter() right after the Step 1 valid-day
-    intersection and before anything else (same point already used in
-    3-temporal_variability.py / 4-hourly_variability.py /
-    5-daypart_variability.py). The Ndat column is dropped unconditionally
-    right after (not only inside the `if`) so it never reaches the
-    returned DataFrame in any mode, including None - same discipline as
-    4-hourly_variability.py, needed here because this function (unlike
-    Step 5's) does not end in a narrow column selection.
+    With a ndat_mode, the observations are then restricted via
+    ndat_filter.apply_ndat_filter(), as in Steps 3-5; ndat_mode=None
+    applies no Ndat filter. The Ndat column is always dropped afterwards,
+    so it never reaches the returned DataFrame.
     """
     df = pd.read_parquet(
         parquet_path,
@@ -388,8 +357,7 @@ def load_prepared_dataset(
 
 
 # ======================================================================
-# [E] COMPUTATION (lógica sin cambios; value_col ahora es un parámetro
-# en vez de leer VALUE_COL directamente)
+# [E] COMPUTATION
 # ======================================================================
 
 def build_complete_month_hour_grid() -> pd.DataFrame:
@@ -459,7 +427,7 @@ def compute_month_hour_frequency(
 
 
 # ======================================================================
-# [F] VALIDATION (lógica sin cambios)
+# [F] VALIDATION
 # ======================================================================
 
 def validate_month_hour_results(
@@ -533,7 +501,7 @@ def validate_month_hour_results(
 
 
 # ======================================================================
-# [G] PLOTTING HELPERS (lógica de dibujo sin cambios)
+# [G] PLOTTING HELPERS
 # ======================================================================
 
 def make_heatmap_matrix(df_month_hour: pd.DataFrame, value_column: str) -> np.ndarray:
@@ -551,12 +519,10 @@ def make_heatmap_matrix(df_month_hour: pd.DataFrame, value_column: str) -> np.nd
 
 def cells_at_max(matrix: np.ndarray) -> tuple[list[tuple[int, int]], float]:
     """
-    All (month, hour) cells tied for the maximum of a month-hour matrix -
-    np.argwhere(...)[0] alone would silently keep only the first one,
-    hiding a genuine tie (e.g. two cells both at exactly 100% because each
-    has a single observation that happens to exceed the threshold). Same
-    role as _hours_at_max()/_dayparts_at_max() elsewhere in this project,
-    adapted to a (month, hour) matrix instead of a DataFrame column.
+    All (month, hour) cells tied for the maximum of a month-hour matrix.
+    np.argwhere(...)[0] alone would keep only the first one and hide a
+    genuine tie (e.g. two cells at exactly 100% because each has a single
+    observation above the threshold).
     """
     max_value = float(np.nanmax(matrix))
     positions = np.argwhere(matrix == max_value)
@@ -614,11 +580,8 @@ def save_month_hour_heatmap(
         else:
             location_text = f"{len(tied_cells)} tied cells (see top-cells CSV for the full list)"
 
-        # Figure-level caption below the x-axis label, not above the
-        # title (where it used to collide with 2-line titles) - figure
-        # coordinates so its position does not depend on how many lines
-        # the title has. Purely a layout change: same max-selection logic
-        # (cells_at_max), same data, same colorbar scale.
+        # Caption below the x-axis label, in figure coordinates, so its
+        # position does not depend on the number of title lines.
         fig.text(
             0.5, 0.01,
             f"Maximum: {formatted_max} at {location_text}",
@@ -635,17 +598,14 @@ def save_month_hour_heatmap(
 
 
 # ======================================================================
-# [H] SUMMARY HELPERS (lógica sin cambios)
+# [H] SUMMARY HELPERS
 # ======================================================================
 
 def get_top_cells(df_month_hour: pd.DataFrame, value_column: str, top_n: int = TOP_N_CELLS) -> pd.DataFrame:
     """
-    Top N month-hour cells by value_column, with an explicit rank column -
-    same sort/selection logic print_top_cells() already used (unchanged
-    methodology), just made reusable so the result can be saved to CSV,
-    not only printed. kind="stable" makes tie-breaking deterministic
-    (preserves month/hour order for equal values), same choice already
-    made for the equivalent sort in 3.2-temporal_comparison.py.
+    Top N month-hour cells by value_column, with an explicit rank column.
+    kind="stable" makes tie-breaking deterministic (month/hour order is
+    kept for equal values), as in 3.2-temporal_comparison.py.
     """
     top = (
         df_month_hour
@@ -683,17 +643,13 @@ def get_cross_station_maxima(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Rank-1 row of the Top-10 p90/p99 CSVs main() already saved for each
-    station (get_top_cells()) - reads existing output only, never touches
-    the Parquet, never recomputes anything. Same "a missing station is not
-    fatal" convention as 2.2/3.2/4.2/5.2's comparators: a station without
-    Step 6 output for this exact year/DOY/th_cov/ndat_mode combination (or
-    whose CSV, for any reason, does not contain a rank=1 row) is reported
-    in missing_stations instead of raising.
+    Rank-1 row of the Top-10 p90/p99 CSVs already saved by main() for each
+    station - reads existing outputs only, nothing is recomputed. As in the
+    2.2/3.2/4.2/5.2 comparisons, a missing station is not fatal: a station
+    without Step 6 output for this year/DOY/th_cov/ndat_mode combination
+    (or without a rank=1 row) is reported in missing_stations.
 
-    The returned table preserves the order of `stations` as given (not
-    resorted alphabetically) - callers that want UNSA/KOUG/WHIT/YELL order
-    simply pass the list in that order.
+    The returned table keeps the order of `stations` as given.
     """
     rows: list[dict] = []
     missing_stations: dict[str, str] = {}

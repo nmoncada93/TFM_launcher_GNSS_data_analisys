@@ -4,24 +4,20 @@
 """
 Step 3 - Annual thresholds and daily exceedance frequency.
 
-Reads from the Step 0 Parquet and the results/{STATION}/{YEAR}/{STEP}/{INDEX}/
-layout, following the same philosophy as 1-completitud.py and 2-ccdf.py
-(CLAUDE.md section 11): global config as defaults, a pure parametrised
-run_temporal_analysis() with no printing/file I/O, main() for console
-mode, import-safe.
+Inputs: the Step 0 Parquet and the Step 1 coverage CSV. Outputs under
+results/{STATION}/{YEAR}/3_temporal_variability/{INDEX}/. Same structure as
+Steps 1-2: globals in section [A] are console defaults,
+run_temporal_analysis() is a pure parametrised calculation (no prints, no
+file writes), main() is the console entry point.
 
-This step no longer builds its own "prepared temporal" Parquet. That was
-only needed so Steps 4-6 would not have to re-read RAW; now that Step 0
-already provides a per-station Parquet with every observation, a second
-intermediate Parquet here would just be redundant (CLAUDE.md section 2).
-Steps 4-6 will read the Step 0 Parquet directly once they are migrated.
+The annual p90/p99 thresholds are station-specific: each station's are
+computed from its own observations (Step 1 valid days, then the Ndat
+criterion; the coverage threshold is not re-applied). Steps 4-6 read the
+annual-thresholds CSV written here and reuse them unchanged. An exceedance
+is a value >= threshold.
 
 Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported() (CLAUDE.md section 3-bis).
-
-Neither the threshold/frequency calculation nor the plotting code changed
-in this pass - only how they are organised, parametrised, and where they
-read/write.
+INDEX_CONFIG / validate_index_supported().
 """
 
 from pathlib import Path
@@ -44,12 +40,12 @@ YEAR = 2024
 DOY_START = 1
 DOY_END = 366
 
-# Índice a analizar. Solo "roti_l1" está científicamente
-# implementado/validado - ver INDEX_CONFIG.
+# Index to analyse. Only "roti_l1" is scientifically
+# implemented/validated - see INDEX_CONFIG.
 VALUE_COL = "roti_l1"
 
-# Criterio Ndat para las observaciones ROTI L1. Ver ndat_filter.py - eq60
-# es el default oficial del TFM.
+# Ndat criterion for the ROTI L1 observations (see ndat_filter.py);
+# "eq60" is the official criterion of the study.
 NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
 
 TH_COV = 0.75
@@ -62,9 +58,9 @@ PLOT_DPI = 250
 
 
 # ======================================================================
-# [B] ÍNDICES: PARQUET <-> NOMBRE DE FICHERO <-> ETIQUETA CIENTÍFICA
+# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL
 # ======================================================================
-# Misma fuente única de verdad que en 2-ccdf.py (CLAUDE.md sección 3-bis).
+# Same index definitions as in 2-ccdf.py.
 INDEX_CONFIG = {
     "roti_l1": {
         "parquet_column": "06_roti_l1",
@@ -91,14 +87,14 @@ INDEX_CONFIG = {
         "parquet_column": "10_s4_l1",
         "file_tag": "S4L1",
         "label": "S4 L1",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
     "s4_l2": {
         "parquet_column": "11_s4_l2",
         "file_tag": "S4L2",
         "label": "S4 L2",
-        "unit": "",  # S4 es adimensional
+        "unit": "",  # S4 is dimensionless
         "scientifically_supported": False,
     },
 }
@@ -106,9 +102,9 @@ INDEX_CONFIG = {
 
 def validate_index_supported(value_col: str) -> dict:
     """
-    Comprueba que value_col tiene un análisis científico implementado y
-    validado - no solo que la columna exista en el Parquet. Recibe
-    value_col como argumento explícito (no lee VALUE_COL global).
+    Checks that value_col has an implemented and validated analysis - not
+    just that the column exists in the Parquet. Returns its INDEX_CONFIG
+    entry.
     """
     if value_col not in INDEX_CONFIG:
         raise ValueError(
@@ -128,7 +124,7 @@ def validate_index_supported(value_col: str) -> dict:
 
 
 # ======================================================================
-# [C] RESOLUCIÓN DE RUTAS
+# [C] PATH RESOLUTION
 # ======================================================================
 def resolve_paths(
     station: str,
@@ -141,17 +137,13 @@ def resolve_paths(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Resuelve rutas de entrada/salida a partir de los parámetros recibidos,
-    no de los globales del módulo. Salidas bajo
-    results/{STATION}/{YEAR}/3_temporal_variability/{VALUE_COL}/ - Steps 0
-    y 1 no cambian (no dependen del índice).
+    Input/output paths, computed from the arguments received (not from
+    the module globals). Outputs go under
+    results/{STATION}/{YEAR}/3_temporal_variability/{VALUE_COL}/.
 
-    ndat_mode=None (default) reproduce exactamente la ruta/prefix de antes
-    de que este script conociera Ndat - ningún caller existente que no
-    pase este argumento (hoy, web_server.py) ve ningún cambio de ruta.
-    Pasar un modo real ("eq60"/"ge30"/"all"/"lt30") añade un nivel más
-    (ndat_config["dir_tag"]) y etiqueta también el prefix del fichero
-    (ndat_config["file_tag"]) - mismo mecanismo que ya usa 2-ccdf.py.
+    ndat_mode=None: no Ndat subfolder and no Ndat tag in the file prefix.
+    A mode ("eq60"/"ge30"/"all"/"lt30") adds the ndat_config["dir_tag"]
+    subfolder and the ndat_config["file_tag"] prefix tag, as in 2-ccdf.py.
     """
     parquet_path = (
         project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
@@ -187,7 +179,7 @@ def resolve_paths(
 
 
 # ======================================================================
-# [D] FUNCIONES DE CARGA
+# [D] INPUT LOADING
 # ======================================================================
 def load_valid_days(coverage_csv: Path, doy_start: int, doy_end: int) -> pd.DataFrame:
     """Read the Step 1 CSV and return valid days inside the selected range."""
@@ -221,7 +213,7 @@ def load_valid_days(coverage_csv: Path, doy_start: int, doy_end: int) -> pd.Data
 
 
 # ======================================================================
-# [E] VALIDACIÓN INTERNA (sin prints - solo lanza si algo es inconsistente)
+# [E] INTERNAL CONSISTENCY CHECKS (no prints - raise on inconsistency)
 # ======================================================================
 def validate_results(
     df_valid: pd.DataFrame,
@@ -260,7 +252,7 @@ def validate_results(
 
 
 # ======================================================================
-# [F] CÁLCULO CIENTÍFICO DE ALTO NIVEL (sin prints ni I/O de salida)
+# [F] SCIENTIFIC CALCULATION (no prints, no output files)
 # ======================================================================
 def run_temporal_analysis(
     station: str = STATION,
@@ -274,44 +266,29 @@ def run_temporal_analysis(
     ndat_mode: str | None = None,
 ) -> dict:
     """
-    Calcula umbrales anuales (p_high, p_extreme) y frecuencia diaria de
-    superación para una estación/año/rango de DoY.
+    Annual thresholds (p_high, p_extreme) and daily exceedance frequency
+    for one station, year and DoY range. Pure calculation: every input is
+    an argument, nothing is printed or written.
 
-    Orquesta el mismo cálculo que hacía antes el código a nivel de módulo
-    (misma selección de días válidos del Step 1, misma fórmula de
-    percentiles, mismo criterio de superación diaria) leyendo del Parquet
-    del Step 0 en vez de RAW, y sin construir el Parquet preparado que
-    generaba la versión anterior (ver docstring del módulo).
+    Observations: those of the Step 1 valid days; with a ndat_mode, only
+    the rows that satisfy ndat_filter.apply_ndat_filter() (ndat_mode=None
+    applies no Ndat filter). The annual thresholds and both terms of the
+    daily frequency come from the same filtered set, so different criteria
+    are never mixed. An exceedance is a value >= threshold.
 
-    No imprime nada ni guarda ningún fichero - función de cálculo pura.
-    Todos los parámetros llegan como argumentos explícitos; nada dentro
-    de la función depende de STATION/YEAR/VALUE_COL/etc. del módulo.
+    Raises FileNotFoundError if the Step 0 Parquet or the Step 1 coverage
+    CSV is missing, and ValueError if value_col is not scientifically
+    supported.
 
-    Lanza FileNotFoundError si falta el Parquet del Step 0 o el CSV de
-    completitud del Step 1, y ValueError si value_col no está
-    científicamente soportado.
-
-    ndat_mode=None (default) es el comportamiento legacy: ninguna fila se
-    descarta por Ndat, idéntico a antes de que este script conociera
-    ndat_filter - así cualquier caller que todavía no pase este argumento
-    (hoy, web_server.py) no ve ningún cambio. Con un modo real
-    ("eq60"/"ge30"/"all"/"lt30"), las observaciones se restringen vía
-    ndat_filter.apply_ndat_filter() después de seleccionar los días
-    válidos del Step 1 y antes de calcular los umbrales anuales - tanto
-    el umbral anual como el numerador/denominador de la frecuencia diaria
-    se derivan del mismo df_work ya filtrado, así que no pueden quedar
-    mezclados criterios distintos. El criterio de superación (>=) y el
-    resto del cálculo no cambian - Ndat solo cambia el conjunto de
-    observaciones de entrada.
-
-    Devuelve un dict con:
-      - "index_config": entrada de INDEX_CONFIG para value_col;
-      - "ndat_config": entrada de NDAT_MODES para ndat_mode, o None si
-        ndat_mode is None;
-      - "annual_values": array 1D con todas las observaciones usadas;
-      - "threshold_high", "threshold_extreme": umbrales anuales;
-      - "df_thresholds": tabla resumen de una fila;
-      - "df_daily": frecuencia diaria de superación.
+    Returns a dict with:
+      - "index_config": INDEX_CONFIG entry of value_col;
+      - "ndat_config": NDAT_MODES entry of ndat_mode, or None;
+      - "annual_values": 1D array with every observation used;
+      - "threshold_high", "threshold_extreme": annual thresholds;
+      - "df_thresholds": one-row summary table;
+      - "df_daily": daily exceedance frequency;
+      - "df_valid", "skipped_doys": Step 1 valid days, and those of them
+        without usable values.
     """
     index_config = validate_index_supported(value_col)
     parquet_value_col = index_config["parquet_column"]
@@ -380,10 +357,8 @@ def run_temporal_analysis(
     }])
 
     # ------------------------------------------------------------------
-    # Frecuencia diaria de superación, vectorizada: un solo groupby sobre
-    # el Parquet ya filtrado a días válidos, en vez de recorrer un
-    # daily_data construido día a día (que en la versión anterior venía
-    # de releer RAW una vez por día).
+    # Daily exceedance frequency: one groupby over the observations used
+    # for the annual thresholds.
     # ------------------------------------------------------------------
     df_work["above_high"] = df_work[parquet_value_col] >= threshold_high
     df_work["above_extreme"] = df_work[parquet_value_col] >= threshold_extreme
@@ -531,7 +506,7 @@ def save_daily_frequency_plot(
 
 
 # ======================================================================
-# [H] MAIN (modo consola): orquesta el cálculo + guarda CSV/PNG/consola
+# [H] MAIN (console mode): calculation + CSV/PNG outputs + console report
 # ======================================================================
 def main() -> None:
     print("Step 3 — Annual thresholds and daily exceedance frequency")
