@@ -12,14 +12,25 @@ Usable two ways:
      globals below are only the console defaults; the calculation itself
      does not depend on them.
 
-A day is valid when its temporal coverage (unique minutes / 1440) reaches
-TH_COV. The status is computed without any Ndat criterion; Steps 2-6 then
-apply Ndat to the observations of the valid days only.
+Each index (index_config.py) and Ndat criterion (a canonical ndat_filter
+mode) defines its own completeness:
+
+  Step 0 Parquet -> Ndat criterion on the index's Ndat column
+                 -> observations with a finite value of the index
+                 -> unique minutes per day
+                 -> coverage = n_minutes / 1440 -> valid if coverage >= TH_COV
+
+"all" keeps every observation (ALL_NDAT completeness); any other criterion
+removes the observations that do not satisfy it before the minutes are
+counted. Only NaN/infinite index values are discarded: 0 is a valid value
+(S4 can be 0). Every combination writes the same CSV schema (DoY,
+n_minutes, coverage, status, note) to its own folder
+(completeness_paths: 1_completeness/<dir_tag>/ for ROTI L1, as before the
+index existed, 1_completeness/<index>/<dir_tag>/ for the others).
 
 Optional DIAGNOSTIC (section [D.2], off by default): how much a Ndat
-criterion would reduce each day's coverage. Informative only - the valid/
-invalid status is always the one computed WITHOUT Ndat, and the official
-CSV/PNG and the days used by Steps 2-6 never change.
+criterion reduces each day's coverage compared with ALL_NDAT. Informative
+only - it writes its own files under 1_completeness/ndat_impact/.
 """
 
 import calendar
@@ -27,8 +38,11 @@ from datetime import datetime
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
+import completeness_paths
+import index_config as indices
 import ndat_filter
 import plot_style
 import project_paths
@@ -47,14 +61,22 @@ DOY_END = 366  # 2024 is a leap year
 # coverage = n_unique_minutes / 1440
 TH_COV = 0.75
 
-# [A.3] Console mode only: also open the plot in a window (the PNG is always saved).
+# [A.3] Ndat criterion that defines this completeness: any canonical
+# ndat_filter mode (e.g. "eq60", "ge40"). "all" keeps every observation (ALL_NDAT).
+NDAT_MODE = "all"
+
+# [A.3b] Index whose completeness is computed: any key of
+# index_config.INDEX_CONFIG (e.g. "roti_l1", "s4_l1").
+VALUE_COL = indices.DEFAULT_INDEX
+
+# [A.4] Console mode only: also open the plot in a window (the PNG is always saved).
 SHOW_PLOT = True
 
-# [A.4] Optional DIAGNOSTIC: impact of a Ndat criterion on completeness
-# (section [D.2]). Informative only - never changes the official outputs
-# or the valid/invalid status.
+# [A.5] Optional DIAGNOSTIC: ALL_NDAT completeness compared with that of
+# NDAT_IMPACT_MODE (section [D.2]). Informative only - never changes the
+# completeness outputs.
 SHOW_NDAT_IMPACT = False
-NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE  # only read when SHOW_NDAT_IMPACT is True
+NDAT_IMPACT_MODE = ndat_filter.NDAT_DEFAULT_MODE  # only read when SHOW_NDAT_IMPACT is True
 # Width of the band just below th_cov used to group the valid days by their
 # post-Ndat coverage (a fraction, like coverage: 0.05 = 5 percentage points).
 NDAT_COVERAGE_BAND = 0.05
@@ -68,17 +90,38 @@ PLOT_TITLE = f"Daily data coverage — Station {STATION} ({YEAR})"
 # Completeness only needs these columns from the Step 0 parquet:
 #   - 01_sec_of_day
 #   - 14_doy_utc
+# plus the index's value and Ndat columns (index_config), read alongside
+# them to keep the observations with a finite value that satisfy the Ndat
+# criterion.
 # The parquet is already single-station, no need to filter by station.
 PARQUET_COLUMNS = ["01_sec_of_day", "14_doy_utc"]
+
+# Note of a day that has station rows in the parquet but none that satisfies
+# the Ndat criterion (only possible with a criterion other than "all").
+NO_DATA_AFTER_NDAT_NOTE = "no_data_after_ndat_filter"
+
+# Note of a day whose rows that satisfy the Ndat criterion all have a
+# NaN/infinite value of the index.
+NO_FINITE_VALUES_NOTE = "no_finite_index_values"
 
 
 # ======================================================================
 # [C] PATH RESOLUTION
 # ======================================================================
-def resolve_paths(station: str, year: int, doy_start: int, doy_end: int, th_cov: float) -> dict:
+def resolve_paths(
+    station: str, year: int, doy_start: int, doy_end: int, th_cov: float, ndat_mode: str = "all",
+    value_col: str = VALUE_COL,
+) -> dict:
     """
     Resolves every input/output path for a given station/year/DoY
-    range/threshold, following the results/{STATION}/{YEAR}/... layout.
+    range/threshold/Ndat criterion/index, following the
+    results/{STATION}/{YEAR}/... layout.
+
+    The completeness outputs (completeness_dir, results_dir, output_csv,
+    output_png) come from completeness_paths, shared with the steps that
+    read them: each index and criterion has its own folder and tags in the
+    file names, so outputs of different indices, criteria, DoY ranges or
+    thresholds never overwrite each other.
 
     Computed from the arguments received, not from the module-level
     globals, so console and web runs resolve the same paths.
@@ -91,31 +134,34 @@ def resolve_paths(station: str, year: int, doy_start: int, doy_end: int, th_cov:
         project_paths.RESULTS_ROOT / "global" / str(year) / f"0_raw_file_inventory_{year}.csv"
     )
 
-    results_dir = project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
-    output_tag = f"{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}"
-
     return {
         "parquet_path": parquet_path,
         "global_inventory_csv": global_inventory_csv,
-        "results_dir": results_dir,
-        "output_csv": results_dir / f"coverage_{output_tag}.csv",
-        "output_png": results_dir / f"coverage_plot_{output_tag}.png",
+        **completeness_paths.resolve_completeness_paths(
+            station, year, doy_start, doy_end, th_cov, ndat_mode, index=value_col
+        ),
     }
 
 
 def resolve_ndat_impact_paths(
     station: str, year: int, doy_start: int, doy_end: int, th_cov: float, ndat_mode: str,
+    value_col: str = VALUE_COL,
 ) -> dict:
     """
     Output paths of the optional Ndat-impact DIAGNOSTIC (section [D.2]).
-    Own subfolder and own file names under 1_completeness/, so they can
-    never overwrite - or be read instead of - the official coverage CSV,
-    which Steps 2-6 locate by its exact name.
+    Own subfolder (ndat_impact/<dir_tag>/ inside the index's
+    completeness_dir) and own file names, so they can never overwrite - or
+    be read instead of - a completeness CSV.
     """
     ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-    results_dir = resolve_paths(station, year, doy_start, doy_end, th_cov)["results_dir"]
-    diag_dir = results_dir / "ndat_impact" / ndat_config["dir_tag"]
-    tag = f"{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}_{ndat_config['file_tag']}"
+    completeness_dir = resolve_paths(
+        station, year, doy_start, doy_end, th_cov, value_col=value_col
+    )["completeness_dir"]
+    diag_dir = completeness_dir / "ndat_impact" / ndat_config["dir_tag"]
+    tag = (
+        f"{completeness_paths.index_name_tag(station, year, value_col)}_"
+        f"{completeness_paths.run_tag(doy_start, doy_end, th_cov)}_{ndat_config['file_tag']}"
+    )
 
     return {
         "diag_dir": diag_dir,
@@ -151,30 +197,58 @@ def missing_day_note(doy: int, df_inventory: pd.DataFrame) -> str:
     return "no_data_for_station"
 
 
+def finite_index_rows(df: pd.DataFrame, parquet_value_col: str) -> pd.DataFrame:
+    """
+    Rows of df whose index value is finite. Only NaN and infinities are
+    dropped: 0 (a valid S4 value) and every other number are kept.
+    """
+    values = pd.to_numeric(df[parquet_value_col], errors="coerce").to_numpy(dtype=float)
+    return df.loc[np.isfinite(values)]
+
+
 def run_completeness(
     station: str = STATION,
     year: int = YEAR,
     doy_start: int = DOY_START,
     doy_end: int = DOY_END,
     th_cov: float = TH_COV,
+    ndat_mode: str = "all",
+    value_col: str = VALUE_COL,
 ) -> pd.DataFrame:
     """
-    Computes daily completeness for one station/year/DoY range.
+    Computes daily completeness of the index `value_col` (index_config) for
+    one station/year/DoY range under the Ndat criterion `ndat_mode` (a
+    canonical ndat_filter mode, e.g. "eq60").
 
     Definition:
+      observations = Step 0 rows that satisfy the Ndat criterion on the
+                     index's Ndat column ("all": every row) and have a
+                     finite value of the index (0 included)
       minute = sec_of_day // 60
       n_minutes = # of unique minutes present (0..1440)
       coverage = n_minutes / 1440
       valid if coverage >= th_cov
-    No Ndat criterion is applied here.
+
+    Returns one row per DoY: DoY, n_minutes, coverage, status, note - the
+    same schema for every index and criterion. note is "ok" when the day
+    has observations; otherwise the reason from the Step 0 inventory
+    (missing_day_note()), NO_DATA_AFTER_NDAT_NOTE when the station has rows
+    that day but none satisfies the criterion, or NO_FINITE_VALUES_NOTE
+    when those that do all have a NaN/infinite index value.
 
     Pure calculation: reads its two inputs and returns a DataFrame, with
     no prints or file writes, so console and web share it.
 
     Raises FileNotFoundError with an explicit message if the Step 0
-    parquet or the Step 0 global inventory are missing.
+    parquet or the Step 0 global inventory are missing, and ValueError if
+    value_col or ndat_mode is unknown or not allowed for the index.
     """
-    paths = resolve_paths(station, year, doy_start, doy_end, th_cov)
+    index_config = indices.validate_index_supported(value_col)
+    indices.validate_ndat_for_index(value_col, ndat_filter.validate_ndat_mode(ndat_mode))
+    parquet_value_col = index_config["parquet_column"]
+    ndat_column = index_config["ndat_column"]
+
+    paths = resolve_paths(station, year, doy_start, doy_end, th_cov, ndat_mode, value_col)
     parquet_path = paths["parquet_path"]
     global_inventory_csv = paths["global_inventory_csv"]
 
@@ -190,8 +264,18 @@ def run_completeness(
             "Run 0-toParquet.py first."
         )
 
-    df_station = pd.read_parquet(parquet_path, columns=PARQUET_COLUMNS)
+    df_station = pd.read_parquet(
+        parquet_path, columns=PARQUET_COLUMNS + [parquet_value_col, ndat_column]
+    )
     df_inventory = pd.read_csv(global_inventory_csv).set_index("doy")
+
+    # Days with station rows before the Ndat criterion, and after it, to tell
+    # a day the criterion emptied, or one left with no finite value, apart
+    # from a day without any station data.
+    doys_with_station_data = set(df_station["14_doy_utc"].unique().tolist())
+    df_station = ndat_filter.apply_ndat_filter(df_station, ndat_mode, ndat_column)
+    doys_after_ndat = set(df_station["14_doy_utc"].unique().tolist())
+    df_station = finite_index_rows(df_station, parquet_value_col)
 
     # Unique minutes per DoY in a single vectorised pass over the station.
     minute = (df_station["01_sec_of_day"] // 60).astype(int)
@@ -205,12 +289,18 @@ def run_completeness(
 
     for doy in range(doy_start, doy_end + 1):
         if doy not in n_minutes_by_doy.index:
+            if doy in doys_after_ndat:
+                note = NO_FINITE_VALUES_NOTE
+            elif doy in doys_with_station_data:
+                note = NO_DATA_AFTER_NDAT_NOTE
+            else:
+                note = missing_day_note(doy, df_inventory)
             results.append({
                 "DoY": doy,
                 "n_minutes": 0,
                 "coverage": 0.0,
                 "status": "invalid",
-                "note": missing_day_note(doy, df_inventory)
+                "note": note
             })
             continue
 
@@ -241,12 +331,15 @@ def run_ndat_impact(
     th_cov: float,
     ndat_mode: str,
     coverage_band: float = NDAT_COVERAGE_BAND,
+    value_col: str = VALUE_COL,
 ) -> tuple[pd.DataFrame, dict]:
     """
     Informative only: how much the given Ndat criterion reduces each day's
-    coverage. The official valid/invalid status (computed WITHOUT Ndat by
-    run_completeness(), passed in as df_results) is copied as-is, never
-    recomputed - Steps 2-6 keep using exactly those days.
+    coverage compared with ALL_NDAT, for the index value_col (its Ndat
+    column; only observations with a finite index value, as in
+    run_completeness()). df_results must be the ALL_NDAT completeness of the
+    same index (run_completeness(..., ndat_mode="all")); its valid/invalid
+    status is copied as-is, never recomputed.
 
       Parquet -> ndat_filter.apply_ndat_filter() -> unique minutes/day
               -> coverage_after_ndat = n_minutes_after_ndat / 1440
@@ -254,26 +347,30 @@ def run_ndat_impact(
     Pure function: reads the parquet, returns (df_impact, summary); no
     prints, no file writes.
 
-    df_impact has one row per DoY of the range: the official
+    df_impact has one row per DoY of the range: the ALL_NDAT
     DoY/n_minutes/coverage/status plus observation counts and the
     post-Ndat minutes/coverage. The summary keeps its two scopes apart:
       - filter_on_valid_days: observations and station-minutes on the
-        Step 1 valid days only - the data that actually enters Steps 2-6;
+        ALL_NDAT valid days only;
       - completeness_all_doys: baseline vs post-Ndat coverage over every
         DoY of the range. The filter only removes rows, so no invalid day
         can reach th_cov after it: the days that stay >= th_cov are always
         a subset of the valid ones;
-      - post_ndat_coverage_of_valid_days: the Step 1 valid days split by
+      - post_ndat_coverage_of_valid_days: the ALL_NDAT valid days split by
         coverage_after_ndat into three exclusive groups - >= th_cov,
         [th_cov - coverage_band, th_cov) and < th_cov - coverage_band.
     All are sums over rows of df_impact, so the CSV reproduces them.
     """
     ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-    paths = resolve_paths(station, year, doy_start, doy_end, th_cov)
+    index_config = indices.validate_index_supported(value_col)
+    indices.validate_ndat_for_index(value_col, ndat_config)
+    paths = resolve_paths(station, year, doy_start, doy_end, th_cov, value_col=value_col)
     df = pd.read_parquet(
         paths["parquet_path"],
-        columns=PARQUET_COLUMNS + [ndat_filter.NDAT_PARQUET_COLUMN],
+        columns=PARQUET_COLUMNS + [index_config["parquet_column"], index_config["ndat_column"]],
     )
+    # Same population as run_completeness(): finite index values only.
+    df = finite_index_rows(df, index_config["parquet_column"]).copy()
     df["minute"] = (df["01_sec_of_day"] // 60).astype(int)  # same definition as run_completeness()
     doys = df_results["DoY"].to_numpy()
 
@@ -284,14 +381,18 @@ def run_ndat_impact(
         return n_obs, n_minutes
 
     n_obs, n_minutes_before = per_doy(df)
-    # Guard: the unfiltered minute count must be exactly the official one,
-    # or the two definitions have drifted apart and the comparison is void.
+    # Guard: the unfiltered minute count must be exactly that of df_results,
+    # or df_results is not the ALL_NDAT completeness (or the two minute
+    # definitions have drifted apart) and the comparison is void.
     if not (n_minutes_before == df_results["n_minutes"].to_numpy()).all():
         raise RuntimeError(
             "Ndat-impact diagnostic: unfiltered unique minutes do not match "
-            "run_completeness() - the minute definitions have diverged."
+            "df_results - pass the ALL_NDAT completeness "
+            "(run_completeness(..., ndat_mode=\"all\"))."
         )
-    n_obs_retained, n_minutes_after = per_doy(ndat_filter.apply_ndat_filter(df, ndat_mode))
+    n_obs_retained, n_minutes_after = per_doy(
+        ndat_filter.apply_ndat_filter(df, ndat_mode, index_config["ndat_column"])
+    )
 
     df_impact = df_results[["DoY", "n_minutes", "coverage", "status"]].copy()
     df_impact["n_obs"] = n_obs
@@ -348,7 +449,7 @@ def run_ndat_impact(
 
 def _post_ndat_coverage_groups(valid: pd.DataFrame, th_cov: float, coverage_band: float) -> dict:
     """
-    The official valid days (rows of df_impact with status == "valid")
+    The ALL_NDAT valid days (rows of df_impact with status == "valid")
     split by coverage_after_ndat into three exclusive groups, reusing the
     above_th_after_ndat column. Diagnostic only - the status is unchanged.
     """
@@ -553,7 +654,7 @@ def create_coverage_plot(
         y=th_cov,
         linestyle="--",
         linewidth=1,
-        label=f"Coverage threshold ({th_cov})"
+        label=f"Coverage threshold ({completeness_paths.format_th_cov(th_cov)})"
     )
 
     plt.xlabel("Day of Year (DoY)")
@@ -606,10 +707,10 @@ def create_ndat_impact_plot(
     show_plot: bool = True,
 ) -> None:
     """
-    DIAGNOSTIC plot, separate from the official one: daily coverage
-    without and with the Ndat criterion, with the same th_cov line. The
-    footer gives the official valid days and how many of them would stay
-    >= th_cov after the filter.
+    DIAGNOSTIC plot, separate from the completeness plots: ALL_NDAT daily
+    coverage and daily coverage after the Ndat criterion, with the same
+    th_cov line. The footer gives the ALL_NDAT valid days and how many of
+    them stay >= th_cov after the filter.
     """
     is_valid = df_impact["status"] == "valid"
     n_valid = int(is_valid.sum())
@@ -689,8 +790,12 @@ def print_ndat_impact_summary(summary: dict) -> None:
 # [G] MAIN PROGRAM (console mode)
 # ======================================================================
 def main() -> None:
-    df_results = run_completeness(STATION, YEAR, DOY_START, DOY_END, TH_COV)
+    ndat_label = ndat_filter.validate_ndat_mode(NDAT_MODE)["label"]
+    index_label = indices.get_index(VALUE_COL)["label"]
+    df_results = run_completeness(STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE, VALUE_COL)
 
+    print(f"\nIndex: {index_label}")
+    print(f"Ndat criterion: {ndat_label}")
     print("\nFinal daily completeness table (first rows):")
     print(df_results.head(30))
 
@@ -701,7 +806,7 @@ def main() -> None:
     annual_valid_pct = 100.0 * n_valid / n_total if n_total > 0 else 0.0
     print(f"Annual total coverage (days with coverage >= {TH_COV}): {annual_valid_pct:.2f}%")
 
-    paths = resolve_paths(STATION, YEAR, DOY_START, DOY_END, TH_COV)
+    paths = resolve_paths(STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE, VALUE_COL)
     paths["results_dir"].mkdir(parents=True, exist_ok=True)
 
     save_results_csv(df_results, paths["output_csv"])
@@ -709,24 +814,32 @@ def main() -> None:
     create_coverage_plot(
         df_results,
         th_cov=TH_COV,
-        plot_title=PLOT_TITLE,
+        plot_title=f"{PLOT_TITLE} — {index_label} — {ndat_label}",
         output_png=paths["output_png"],
         show_plot=SHOW_PLOT,
     )
 
-    # Optional diagnostic - runs after the official outputs are written and
-    # only adds its own files under 1_completeness/ndat_impact/.
+    # Optional diagnostic - runs after the completeness outputs are written
+    # and only adds its own files under 1_completeness/ndat_impact/. It
+    # always compares against the ALL_NDAT completeness.
     if SHOW_NDAT_IMPACT:
+        if NDAT_MODE == "all":
+            df_all = df_results
+        else:
+            df_all = run_completeness(STATION, YEAR, DOY_START, DOY_END, TH_COV, "all", VALUE_COL)
         df_impact, impact = run_ndat_impact(
-            df_results, STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE,
+            df_all, STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_IMPACT_MODE,
+            value_col=VALUE_COL,
         )
-        impact_paths = resolve_ndat_impact_paths(STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE)
+        impact_paths = resolve_ndat_impact_paths(
+            STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_IMPACT_MODE, VALUE_COL,
+        )
         impact_paths["diag_dir"].mkdir(parents=True, exist_ok=True)
         save_results_csv(df_impact, impact_paths["output_csv"])
         create_ndat_impact_plot(
             df_impact,
             th_cov=TH_COV,
-            plot_title=f"Ndat impact on daily coverage - Station {STATION} ({YEAR})",
+            plot_title=f"Ndat impact on daily coverage - {index_label} - Station {STATION} ({YEAR})",
             ndat_label=impact["ndat_label"],
             output_png=impact_paths["output_png"],
             show_plot=SHOW_PLOT,

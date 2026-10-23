@@ -1,5 +1,14 @@
 /database/
 /results/
 /.portable_runtime_cache/
+# Linux runtime and Ubuntu packages: built by tools/linux/, distributed
+# outside the repository.
+/app/python_portable_linux/
+/dist/
 __pycache__/
-*.py[cod]
+# Compiled bytecode only: *.pyd files are the Windows runtime's compiled
+# extensions (app/python_libraries, app/python_portable) and must stay
+# versioned.
+*.py[co]
+# Local virtual environments (run_web_server.bat/.sh use app/.venv first).
+.venv/

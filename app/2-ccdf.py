@@ -4,17 +4,20 @@
 """
 Step 2 - Monthly CCDF and percentiles.
 
-Inputs: the Step 0 Parquet and the Step 1 coverage CSV. Outputs under
-results/{STATION}/{YEAR}/2_ccdf/{INDEX}/. Same structure as 1-completitud.py:
-globals in section [A] are console defaults, run_ccdf_analysis() is a pure
-parametrised calculation (no prints, no file writes), main() is the console
-entry point, and plots are saved without depending on plt.show().
+Inputs: the Step 0 Parquet and the Step 1 completeness CSV. Outputs under
+results/{STATION}/{YEAR}/2_ccdf/{INDEX}/<dir_tag>/. Same structure as
+1-completitud.py: globals in section [A] are console defaults,
+run_ccdf_analysis() is a pure parametrised calculation (no prints, no file
+writes), main() is the console entry point, and plots are saved without
+depending on plt.show().
 
-Only the Step 1 valid days are used; within them the Ndat criterion selects
-observations. The Step 1 coverage threshold is not re-applied after Ndat.
+Days and observations always come from the same Ndat criterion: the valid
+days of that criterion's Step 1 completeness (1_completeness/<dir_tag>/)
+and, within them, the observations that satisfy it ("all": every
+observation).
 
-Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported().
+The analysed index (ROTI L1, S4 L1, ...) and its Ndat column, labels, unit
+and plot range come from index_config.py.
 """
 
 import pandas as pd
@@ -23,6 +26,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import numpy as np
 
+import completeness_paths
+import index_config as indices
 import ndat_filter
 import plot_style
 import project_paths
@@ -37,13 +42,15 @@ YEAR = 2024
 DOY_START = 1
 DOY_END = 366  # 2024 is a leap year
 
-# [A.2] Index to analyse. Only "roti_l1" is scientifically
-# implemented/validated in Step 2 - see INDEX_CONFIG.
-VALUE_COL = "roti_l1"
+# [A.2] Index to analyse: any key of index_config.INDEX_CONFIG
+# (e.g. "roti_l1", "s4_l1").
+VALUE_COL = indices.DEFAULT_INDEX
 
-# [A.2b] Ndat criterion for the ROTI L1 observations (see ndat_filter.py);
-# "eq60" is the official criterion of the study.
-NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
+# [A.2b] Ndat criterion (a canonical ndat_filter mode, e.g. "eq60"). It selects both
+# the Step 1 completeness whose valid days are used and the observations;
+# Step 1 must have been run with the same criterion. "all" keeps every
+# observation.
+NDAT_MODE = "all"
 
 # [A.3] Step 1 completeness threshold (used to locate its CSV)
 TH_COV = 0.75
@@ -62,9 +69,10 @@ MONTHS_TO_ANALYZE = [3, 7, 11]
 MONTHS_TO_COMPARE = [3, 7, 11]
 
 # [A.7] Plot settings - console defaults. The plot functions receive them
-# as arguments rather than reading them from here (see [E]).
+# as arguments rather than reading them from here (see [E]). The x range of
+# the CCDF plots depends on the index (index_config plot_x_lim, see
+# ccdf_x_lim()).
 USE_LOG_Y = True
-X_LIM = (0, 20)
 Y_LIM = (1e-5, 1)
 
 SAVE_INDIVIDUAL_CCDF = True
@@ -83,78 +91,6 @@ MONTH_LINESTYLES = ["-", "--", ":", "-."]
 
 
 # ======================================================================
-# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL
-# ======================================================================
-# Single definition of every index available in the Step 0 Parquet, so a
-# label can never disagree with the data (e.g. a "ROTI L1" plot showing S4).
-#
-# "scientifically_supported" = False: the column exists in the Parquet but
-# its Step 2 analysis is not implemented/validated. Enabling it is a
-# methodological change, not a technical one.
-INDEX_CONFIG = {
-    "roti_l1": {
-        "parquet_column": "06_roti_l1",
-        "file_tag": "ROTIL1",
-        "label": "ROTI L1",
-        "unit": "TECU/min",
-        "scientifically_supported": True,
-    },
-    "roti_lgf": {
-        "parquet_column": "07_roti_lgf",
-        "file_tag": "ROTILGF",
-        "label": "ROTI LGF",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "roti_l2": {
-        "parquet_column": "12_roti_l2",
-        "file_tag": "ROTIL2",
-        "label": "ROTI L2",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "s4_l1": {
-        "parquet_column": "10_s4_l1",
-        "file_tag": "S4L1",
-        "label": "S4 L1",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-    "s4_l2": {
-        "parquet_column": "11_s4_l2",
-        "file_tag": "S4L2",
-        "label": "S4 L2",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-}
-
-
-def validate_index_supported(value_col: str) -> dict:
-    """
-    Checks that value_col has an implemented and validated Step 2
-    analysis - not just that the column exists in the Parquet. Returns its
-    INDEX_CONFIG entry.
-    """
-    if value_col not in INDEX_CONFIG:
-        raise ValueError(
-            f"Index '{value_col}' is not defined in INDEX_CONFIG. "
-            f"Known indices: {sorted(INDEX_CONFIG)}"
-        )
-
-    config = INDEX_CONFIG[value_col]
-
-    if not config["scientifically_supported"]:
-        raise ValueError(
-            f"Index '{value_col}' is available in the Parquet but its "
-            "Step 2 scientific analysis has not yet been "
-            "implemented/validated."
-        )
-
-    return config
-
-
-# ======================================================================
 # [C] PATH RESOLUTION
 # ======================================================================
 def resolve_paths(
@@ -165,41 +101,38 @@ def resolve_paths(
     th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Input/output paths, computed from the arguments received (not from
     the module globals). Outputs go under
-    results/{STATION}/{YEAR}/2_ccdf/{VALUE_COL}/.
+    results/{STATION}/{YEAR}/2_ccdf/{VALUE_COL}/<dir_tag>/, with the
+    criterion's file_tag in the file prefix and the run tag
+    (completeness_paths.run_tag: DoY range and th_cov) in every file name,
+    so results of different criteria, DoY ranges or coverage thresholds
+    never overwrite each other.
 
-    ndat_mode=None: no Ndat subfolder and no Ndat tag in the file prefix.
-    A mode ("eq60"/"ge30"/"all"/"lt30") adds the ndat_config["dir_tag"]
-    subfolder and the ndat_config["file_tag"] prefix tag, so results of
-    different criteria never overwrite each other.
+    coverage_csv is the Step 1 completeness of the same criterion
+    (completeness_paths). Raises ValueError if ndat_mode is unknown.
     """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+
     parquet_path = (
         project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
         / f"0_{station}_{year}_observations.parquet"
     )
-    coverage_csv = (
-        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
-        / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
-    )
+    coverage_csv = completeness_paths.resolve_completeness_paths(
+        station, year, doy_start, doy_end, th_cov, ndat_mode, index=value_col
+    )["output_csv"]
 
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "2_ccdf" / value_col
-
-    if ndat_mode is None:
-        ndat_dir = index_dir
-        prefix = f"2-{station}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        ndat_dir = index_dir / ndat_config["dir_tag"]
-        prefix = f"2-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    ndat_dir = index_dir / ndat_config["dir_tag"]
+    prefix = f"2-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
     ccdf_dir = ndat_dir / "ccdf"
     ccdf_comparisons_dir = ndat_dir / "ccdf_comparisons"
     percentile_dir = ndat_dir / "monthly_percentile_variability"
-    doy_tag = f"DOY{doy_start}_{doy_end}"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
 
     return {
         "parquet_path": parquet_path,
@@ -209,63 +142,59 @@ def resolve_paths(
         "ccdf_dir": ccdf_dir,
         "ccdf_comparisons_dir": ccdf_comparisons_dir,
         "percentile_dir": percentile_dir,
-        "output_pcts_csv": ndat_dir / f"{prefix}_{doy_tag}_monthly_percentiles.csv",
+        "output_pcts_csv": ndat_dir / f"{prefix}_{run_tag}_monthly_percentiles.csv",
         "output_monthly_percentiles_png": (
-            percentile_dir / f"{prefix}_{doy_tag}_monthly_percentile_variability.png"
+            percentile_dir / f"{prefix}_{run_tag}_monthly_percentile_variability.png"
         ),
         "prefix": prefix,
+        "run_tag": run_tag,
     }
 
 
-def individual_ccdf_png(paths: dict, doy_start: int, doy_end: int, month: int) -> Path:
+def individual_ccdf_png(paths: dict, month: int) -> Path:
     """
-    File name of a single-month CCDF. Includes DOY{start}_{end} so runs
-    with different DoY ranges do not overwrite each other. Shared by
-    main() and the web server.
+    File name of a single-month CCDF, with the prefix and run tag of
+    `paths` (resolve_paths()). Shared by main() and the web server.
     """
-    doy_tag = f"DOY{doy_start}_{doy_end}"
-    return paths["ccdf_dir"] / f"{paths['prefix']}_{doy_tag}_M{month:02d}_ccdf_logY.png"
+    return paths["ccdf_dir"] / f"{paths['prefix']}_{paths['run_tag']}_M{month:02d}_ccdf_logY.png"
 
 
-def multi_ccdf_png(paths: dict, doy_start: int, doy_end: int, months: list[int]) -> Path:
+def multi_ccdf_png(paths: dict, months: list[int]) -> Path:
     """
     File name of the multi-month CCDF comparison. Stored in
     ccdf_comparisons_dir, apart from the 12 single-month CCDFs, because
     each month combination produces a new file.
     """
-    doy_tag = f"DOY{doy_start}_{doy_end}"
     months_tag = "_".join(f"M{m:02d}" for m in sorted(months))
-    return paths["ccdf_comparisons_dir"] / f"{paths['prefix']}_{doy_tag}_{months_tag}_ccdf_comparison_logY.png"
+    return (
+        paths["ccdf_comparisons_dir"]
+        / f"{paths['prefix']}_{paths['run_tag']}_{months_tag}_ccdf_comparison_logY.png"
+    )
 
 
 def resolve_cross_station_ccdf_path(
-    year: int, doy_start: int, doy_end: int,
+    year: int, doy_start: int, doy_end: int, th_cov: float,
     stations: list[str], months: list[int],
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> Path:
     """
     Cross-station CCDF comparison output path - global, not scoped to one
-    station: results/global/{year}/2_ccdf_cross_station/, separate from
-    Step 2.2's 2_ccdf_comparison/ (full CCDF curves, not percentile tables).
-
-    ndat_mode is handled as in resolve_paths() (None: no Ndat subfolder
-    or tag).
+    station: results/global/{year}/2_ccdf_cross_station/<dir_tag>/,
+    separate from Step 2.2's 2_ccdf_comparison/ (full CCDF curves, not
+    percentile tables). ndat_mode and the run tag (DoY range, th_cov) are
+    handled as in resolve_paths().
     """
-    doy_tag = f"DOY{doy_start}_{doy_end}"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
     stations_tag = "_".join(sorted(stations))
     months_tag = "_".join(f"M{m:02d}" for m in sorted(months))
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "2_ccdf_cross_station"
 
-    if ndat_mode is None:
-        out_dir = base_dir
-        prefix = f"2-{stations_tag}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        out_dir = base_dir / ndat_config["dir_tag"]
-        prefix = f"2-{stations_tag}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    out_dir = base_dir / ndat_config["dir_tag"]
+    prefix = f"2-{stations_tag}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
-    filename = f"{prefix}_{doy_tag}_{months_tag}_ccdf_cross_station_logY.png"
+    filename = f"{prefix}_{run_tag}_{months_tag}_ccdf_cross_station_logY.png"
     return out_dir / filename
 
 
@@ -357,6 +286,21 @@ def format_n(n: int) -> str:
     return f"{n:,}".replace(",", ".")
 
 
+def ccdf_x_lim(index_config: dict, curves) -> tuple:
+    """
+    x range of a CCDF plot of `curves` ((x_sorted, ccdf, n_values) tuples):
+    the index's fixed plot_x_lim (ROTI: 0-20 TECU/min), or, for an index
+    without one (S4), 0 to the largest plotted value (index_config.plot_x_lim).
+    """
+    max_value = max((float(x[-1]) for x, _, _ in curves if len(x)), default=None)
+    return indices.plot_x_lim(index_config, max_value)
+
+
+def reference_label_x(x_lim: tuple) -> float:
+    """x of the "CCDF = 0.1 (p90)" texts: 1 % of the range in from the left (0.2 for 0-20)."""
+    return x_lim[0] + 0.01 * (x_lim[1] - x_lim[0])
+
+
 # ======================================================================
 # [E] PLOT FUNCTIONS (use_log_y/x_lim/y_lim/show_plot are arguments, with
 # the console globals as defaults)
@@ -382,14 +326,14 @@ def save_ccdf_plot(
     year: int,
     index_label: str,
     index_unit: str,
+    x_lim: tuple,
     use_log_y: bool = USE_LOG_Y,
-    x_lim: tuple = X_LIM,
     y_lim: tuple = Y_LIM,
     show_plot: bool = SHOW_PLOTS
 ):
     """
     Saves the CCDF of a single month, with reference lines at
-    CCDF = 0.1 (p90) and 0.01 (p99).
+    CCDF = 0.1 (p90) and 0.01 (p99). x_lim: ccdf_x_lim().
     """
     plt.figure(figsize=(8, 5))
 
@@ -411,7 +355,7 @@ def save_ccdf_plot(
     plt.axhline(0.1, linestyle="--", linewidth=0.9, alpha=0.7, label="CCDF=0.1 (p90)")
     plt.axhline(0.01, linestyle="--", linewidth=0.9, alpha=0.7, label="CCDF=0.01 (p99)")
 
-    plt.xlabel(f"{index_label} [{index_unit}]")
+    plt.xlabel(indices.axis_label(index_label, index_unit))
     plt.ylabel(f"CCDF = P({index_label} ≥ x)")
     plt.title(f"CCDF {index_label} — {station} — {year} — {month_label(month)}")
     plt.grid(True, which="both", alpha=0.3)
@@ -436,15 +380,15 @@ def save_multi_ccdf_plot(
     year: int,
     index_label: str,
     index_unit: str,
+    x_lim: tuple,
     use_log_y: bool = USE_LOG_Y,
-    x_lim: tuple = X_LIM,
     y_lim: tuple = Y_LIM,
     show_plot: bool = SHOW_PLOTS
 ):
     """
     Saves several monthly CCDFs overlaid in one figure, with each month's
     p90/p99 marked on its own curve and reference lines at CCDF = 0.1 and
-    0.01.
+    0.01. x_lim: ccdf_x_lim().
     """
     plt.figure(figsize=(9, 6))
 
@@ -490,10 +434,10 @@ def save_multi_ccdf_plot(
     plt.axhline(0.1, linestyle="--", linewidth=1.0, alpha=0.7)
     plt.axhline(0.01, linestyle="--", linewidth=1.0, alpha=0.7)
 
-    plt.text(x_lim[0] + 0.2, 0.105, "CCDF = 0.1 (p90)", va="bottom")
-    plt.text(x_lim[0] + 0.2, 0.0105, "CCDF = 0.01 (p99)", va="bottom")
+    plt.text(reference_label_x(x_lim), 0.105, "CCDF = 0.1 (p90)", va="bottom")
+    plt.text(reference_label_x(x_lim), 0.0105, "CCDF = 0.01 (p99)", va="bottom")
 
-    plt.xlabel(f"{index_label} [{index_unit}]")
+    plt.xlabel(indices.axis_label(index_label, index_unit))
     plt.ylabel(f"CCDF = P({index_label} ≥ x)")
     plt.title(
         f"Monthly CCDF comparison — {index_label} — {station} — {year}\n"
@@ -521,15 +465,16 @@ def save_cross_station_ccdf_plot(
     year: int,
     index_label: str,
     index_unit: str,
+    x_lim: tuple,
     use_log_y: bool = USE_LOG_Y,
-    x_lim: tuple = X_LIM,
     y_lim: tuple = Y_LIM,
     show_plot: bool = SHOW_PLOTS,
 ):
     """
     Overlays CCDF curves across stations and months on one shared axis -
     complementary to save_multi_ccdf_plot (fixed station, several months):
-    here several stations are compared for the same month(s).
+    here several stations are compared for the same month(s). x_lim:
+    ccdf_x_lim() over every plotted curve.
 
     ccdf_by_station_month: {station: {month: (x_sorted, ccdf, n_values)}}.
     Colour is fixed per station (STATION_COLORS), linestyle per month
@@ -564,10 +509,10 @@ def save_cross_station_ccdf_plot(
     # Grey reference lines, so they cannot share a colour with a station.
     plt.axhline(0.1, linestyle="--", linewidth=1.0, alpha=0.7, color="gray")
     plt.axhline(0.01, linestyle="--", linewidth=1.0, alpha=0.7, color="gray")
-    plt.text(x_lim[0] + 0.2, 0.105, "CCDF = 0.1 (p90)", va="bottom")
-    plt.text(x_lim[0] + 0.2, 0.0105, "CCDF = 0.01 (p99)", va="bottom")
+    plt.text(reference_label_x(x_lim), 0.105, "CCDF = 0.1 (p90)", va="bottom")
+    plt.text(reference_label_x(x_lim), 0.0105, "CCDF = 0.01 (p99)", va="bottom")
 
-    plt.xlabel(f"{index_label} [{index_unit}]")
+    plt.xlabel(indices.axis_label(index_label, index_unit))
     plt.ylabel(f"CCDF = P({index_label} ≥ x)")
     plt.title(
         f"Cross-station CCDF comparison — {index_label} — {year}\n"
@@ -688,7 +633,7 @@ def save_monthly_percentiles_plot(
     ax.set_ylim(bottom=0)
 
     ax.set_xlabel("Month")
-    ax.set_ylabel(f"{index_label} percentile value [{index_unit}]")
+    ax.set_ylabel(indices.axis_label(f"{index_label} percentile value", index_unit))
 
     ax.set_title(
         f"Monthly variability of {index_label} percentiles — "
@@ -736,34 +681,38 @@ def run_ccdf_analysis(
     pcts: list[int] = PCTS,
     analysis_mode: str = ANALYSIS_MODE,
     months_to_analyze: list[int] = MONTHS_TO_ANALYZE,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Monthly percentiles and CCDFs of value_col for one station, year and
     DoY range. Pure calculation: every input is an argument, nothing is
     printed or written.
 
-    Days: the Step 1 valid days (optionally restricted to
-    months_to_analyze). Observations: with a ndat_mode, only the rows of
-    those days that satisfy ndat_filter.apply_ndat_filter(); the valid
-    days themselves do not depend on Ndat. ndat_mode=None applies no Ndat
-    filter.
+    Days and observations come from the same Ndat criterion, ndat_mode:
+    the valid days of its Step 1 completeness (optionally restricted to
+    months_to_analyze) and, within them, the rows that satisfy
+    ndat_filter.apply_ndat_filter() ("all": every row).
 
-    Raises FileNotFoundError if the Step 0 Parquet or the Step 1 coverage
-    CSV is missing, and ValueError if value_col is not scientifically
-    supported (see validate_index_supported).
+    Raises FileNotFoundError if the Step 0 Parquet or the Step 1
+    completeness of this index and criterion is missing (no fallback to
+    another index or criterion), and ValueError if value_col is not an
+    enabled index (index_config.validate_index_supported), ndat_mode is
+    unknown, or the completeness has no valid day in the selected range
+    (and months).
 
     Returns a dict with:
-      - "index_config": INDEX_CONFIG entry of value_col;
-      - "ndat_config": NDAT_MODES entry of ndat_mode, or None;
+      - "index_config": index_config.INDEX_CONFIG entry of value_col;
+      - "ndat_config": ndat_filter.validate_ndat_mode(ndat_mode);
       - "valid_doys": DoYs used in the analysis;
       - "df_pcts": DataFrame with month, n_days, n_values, p{pct}...;
       - "ccdf_by_month": {month: (x_sorted, ccdf, n_values)};
       - "pcts_by_month": {month: {"p90": ..., "p99": ...}}.
     """
-    index_config = validate_index_supported(value_col)
+    index_config = indices.validate_index_supported(value_col)
     parquet_value_col = index_config["parquet_column"]
-    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None
+    ndat_column = index_config["ndat_column"]
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    indices.validate_ndat_for_index(value_col, ndat_config)
 
     paths = resolve_paths(station, year, doy_start, doy_end, th_cov, value_col, index_config, ndat_mode)
 
@@ -773,20 +722,17 @@ def run_ccdf_analysis(
             "Run 0-toParquet.py first."
         )
 
-    if not paths["coverage_csv"].exists():
-        raise FileNotFoundError(
-            f"Step 1 coverage CSV not found: {paths['coverage_csv']}\n"
-            "Run 1-completitud.py first."
-        )
+    coverage_csv = completeness_paths.require_completeness_csv(
+        station, year, doy_start, doy_end, th_cov, ndat_mode, index=value_col
+    )
 
     df_station = pd.read_parquet(
         paths["parquet_path"],
-        columns=["14_doy_utc", parquet_value_col, ndat_filter.NDAT_PARQUET_COLUMN]
+        columns=["14_doy_utc", parquet_value_col, ndat_column]
     )
-    if ndat_mode is not None:
-        df_station = ndat_filter.apply_ndat_filter(df_station, ndat_mode)
+    df_station = ndat_filter.apply_ndat_filter(df_station, ndat_mode, ndat_column)
 
-    df_cov = pd.read_csv(paths["coverage_csv"])
+    df_cov = pd.read_csv(coverage_csv)
 
     if "DoY" not in df_cov.columns or "status" not in df_cov.columns:
         raise ValueError("El CSV de completitud debe contener columnas: DoY, status")
@@ -803,6 +749,9 @@ def run_ccdf_analysis(
             d for d in valid_doys
             if doy_to_month(year, d) in months_to_analyze
         ]
+
+    if not valid_doys:
+        raise ValueError("No valid days were found in the selected range.")
 
     month_values, n_days_by_month = accumulate_values_by_month(
         df_station, valid_doys, year, parquet_value_col
@@ -965,12 +914,14 @@ def main() -> None:
     # Single-month CCDFs
     # ------------------------------------------------------------------
     if SAVE_INDIVIDUAL_CCDF:
+        # One x range for the 12 months, so they can be compared.
+        x_lim = ccdf_x_lim(index_config, ccdf_by_month.values())
         for m in sorted(ccdf_by_month):
             x, ccdf, _ = ccdf_by_month[m]
-            out_png = individual_ccdf_png(paths, DOY_START, DOY_END, m)
+            out_png = individual_ccdf_png(paths, m)
             save_ccdf_plot(
                 m, x, ccdf, out_png, STATION, YEAR, index_label, index_unit,
-                use_log_y=USE_LOG_Y, x_lim=X_LIM, y_lim=Y_LIM, show_plot=SHOW_PLOTS
+                x_lim=x_lim, use_log_y=USE_LOG_Y, y_lim=Y_LIM, show_plot=SHOW_PLOTS
             )
             print(f"CCDF individual guardada en {out_png}")
 
@@ -978,7 +929,7 @@ def main() -> None:
     # Multi-month CCDF comparison
     # ------------------------------------------------------------------
     if SAVE_COMPARISON_CCDF:
-        out_multi_png = multi_ccdf_png(paths, DOY_START, DOY_END, MONTHS_TO_COMPARE)
+        out_multi_png = multi_ccdf_png(paths, MONTHS_TO_COMPARE)
 
         save_multi_ccdf_plot(
             ccdf_by_month=ccdf_by_month,
@@ -989,7 +940,10 @@ def main() -> None:
             year=YEAR,
             index_label=index_label,
             index_unit=index_unit,
-            use_log_y=USE_LOG_Y, x_lim=X_LIM, y_lim=Y_LIM,
+            x_lim=ccdf_x_lim(
+                index_config, [ccdf_by_month[m] for m in MONTHS_TO_COMPARE if m in ccdf_by_month]
+            ),
+            use_log_y=USE_LOG_Y, y_lim=Y_LIM,
             show_plot=SHOW_PLOTS
         )
 

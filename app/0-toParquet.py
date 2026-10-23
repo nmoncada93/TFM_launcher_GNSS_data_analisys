@@ -13,9 +13,28 @@ It does not compute completeness, CCDF, percentiles, exceedance frequencies,
 or decide which days are valid. Every RAW row belonging to a processed
 station is kept - the quality-flag columns let later scripts decide what to
 filter; nothing is removed here.
+
+RAW provenance: the first build of a year records what it was built from
+(results/global/{year}/0_raw_source_{year}.json): the RAW folder, the DoY
+range, the name/size/mtime of each day's file, and the configuration Step 0
+writes into the Parquet files (stations, UTC offsets, coordinates, QC
+thresholds). A later run for that year must match that record exactly;
+otherwise - or if the year already has data but no record - Step 0 stops
+before writing anything, so Parquet files are never replaced under results
+derived from them. Nothing is ever deleted.
+
+RAW format: every line must have the official 12 whitespace-separated
+columns (section [B]). A file with another number of columns on any line
+stops Step 0 with RawFormatError, naming the file and the first such line,
+before any result file is written - a shifted column must never become a
+silently wrong value.
 """
 
+import gzip
+import json
+import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -104,9 +123,17 @@ def resolve_global_paths(year: int) -> dict:
 # ======================================================================
 # [B] RAW COLUMN DEFINITION - DO NOT TOUCH
 # ======================================================================
-# Every RAW file is expected to have exactly these 12 whitespace-separated
-# columns. The column count is not validated: a row with fewer fields is read
-# with NaN in the missing columns, and extra fields would shift the data.
+# Official rotiS4.YYYYDDD format: exactly these 12 whitespace-separated
+# columns, no header (confirmed by the dataset's author):
+#    1 second of the day (GPS time)      7 ROTI from LGF [TECU/min]
+#    2 receiver name                     8 Ndat(ROTI L1) - also S4 L1/L2, ROTI L2
+#    3 satellite (1-32 GPS, >40 Galileo) 9 Ndat(ROTI LGF)
+#    4 elevation [0,90] deg             10 S4 from L1
+#    5 azimuth (-180,180] deg           11 S4 from L2
+#    6 ROTI from L1 [TECU/min]          12 ROTI from L2 [TECU/min]
+# The column count is checked in read_raw_day(): a line with fewer fields
+# would be read with NaN in the missing columns, one with more would shift
+# the data, so either stops Step 0 (RawFormatError).
 
 RAW_COLS = [
     "01_sec_of_day",
@@ -122,6 +149,7 @@ RAW_COLS = [
     "11_s4_l2",
     "12_roti_l2",
 ]
+RAW_N_COLUMNS = len(RAW_COLS)
 
 
 # ======================================================================
@@ -140,6 +168,10 @@ RAW_CANDIDATE_SUFFIXES = ("", ".gz", ".tmp", ".tmp.gz")
 
 class AmbiguousRawFileError(ValueError):
     """More than one generically named RAW file found for the same day."""
+
+
+class RawFormatError(ValueError):
+    """A RAW file has a line without the official RAW_N_COLUMNS columns."""
 
 
 def is_generic_raw_name(name: str, day_id: str) -> bool:
@@ -191,12 +223,51 @@ def resolve_raw_file(data_dir: Path, year: int, doy: int) -> tuple[Path, list[Pa
     return (generic[0] if generic else base), generic
 
 
+def find_bad_raw_lines(file_path: Path) -> tuple[int, int, int] | None:
+    """
+    First line of a RAW file whose number of whitespace-separated fields is
+    not RAW_N_COLUMNS, as (line number, number of fields, number of such
+    lines in the file), or None if every line has RAW_N_COLUMNS. Blank lines
+    are skipped, as pd.read_csv() does. ".gz" files are read compressed.
+    """
+    opener = gzip.open if file_path.name.lower().endswith(".gz") else open
+    first, n_bad = None, 0
+    with opener(file_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            n_fields = len(line.split())
+            if n_fields in (0, RAW_N_COLUMNS):
+                continue
+            n_bad += 1
+            if first is None:
+                first = (line_number, n_fields)
+    return None if first is None else (first[0], first[1], n_bad)
+
+
+def raw_format_error(file_path: Path, bad: tuple[int, int, int]) -> RawFormatError:
+    """RawFormatError for find_bad_raw_lines()'s result: file, first bad line, count."""
+    line_number, n_fields, n_bad = bad
+    return RawFormatError(
+        f"RAW file {file_path.name} does not have the expected format: "
+        f"{RAW_N_COLUMNS} whitespace-separated columns per line, no header. "
+        f"Line {line_number} has {n_fields} column(s); {n_bad} line(s) of this file "
+        f"differ. File: {file_path}. Step 0 stopped before writing any result file."
+    )
+
+
 def read_raw_day(file_path: Path) -> tuple[pd.DataFrame | None, str]:
     """
     Read one daily RAW file (all stations mixed together).
 
     Returns (dataframe, note). dataframe is None when the file could not be
     used; note explains why ("ok" on success).
+
+    Raises RawFormatError if any line does not have RAW_N_COLUMNS columns.
+    pd.read_csv() would otherwise accept such a file: a first line with
+    more fields turns the extra leading columns into the index (shifting
+    every column), a later one raises ParserError, and a shorter line is
+    padded with NaN. The file is only scanned line by line
+    (find_bad_raw_lines()) when one of these signs appears, so a valid file
+    is read once; NaN written as a value in a 12-column line stays allowed.
     """
     if not file_path.exists():
         return None, "missing_file"
@@ -213,11 +284,21 @@ def read_raw_day(file_path: Path) -> tuple[pd.DataFrame | None, str]:
         )
     except pd.errors.EmptyDataError:
         return None, "empty_file"
+    except pd.errors.ParserError as exc:
+        bad = find_bad_raw_lines(file_path)
+        if bad is not None:
+            raise raw_format_error(file_path, bad) from None
+        return None, f"read_error:{type(exc).__name__}"
     except Exception as exc:
         return None, f"read_error:{type(exc).__name__}"
 
     if df.empty:
         return None, "empty_file"
+
+    if not isinstance(df.index, pd.RangeIndex) or df.isna().to_numpy().any():
+        bad = find_bad_raw_lines(file_path)
+        if bad is not None:
+            raise raw_format_error(file_path, bad)
 
     return df, "ok"
 
@@ -400,6 +481,221 @@ def validate_totals(df_summary: pd.DataFrame, df_inventory: pd.DataFrame) -> Non
 
 
 # ======================================================================
+# [E.2] RAW PROVENANCE - which RAW input a year's study was built from
+# ======================================================================
+RAW_SOURCE_FORMAT = "gnss-step0-raw-source"
+# 2: the Step 0 configuration (step0_config_fingerprint) is part of the
+# identity. A version 1 record does not hold it and is not accepted.
+RAW_SOURCE_VERSION = 2
+
+
+class RawSourceConflictError(RuntimeError):
+    """Step 0 would rebuild a year whose existing data come from another (or an unverifiable) input or configuration."""
+
+
+def raw_source_manifest_path(year: int) -> Path:
+    """Provenance record of a year, next to its RAW inventory (no folder is created)."""
+    return RESULTS_DIR / "global" / str(year) / f"0_raw_source_{year}.json"
+
+
+def raw_source_fingerprint(data_dir: Path, year: int, doy_start: int, doy_end: int,
+                           raw_files: dict) -> dict:
+    """
+    Identity of a run's RAW input, from the files resolve_raw_file() chose
+    (raw_files: doy -> (path, candidates)): the RAW folder as an absolute,
+    resolved path, the DoY range, and for each DoY the file name with its
+    size and modification time (st_mtime_ns), or "missing": true. No
+    content hash - the RAW files can add up to several GB.
+    """
+    files = []
+    for doy in range(doy_start, doy_end + 1):
+        file_path, _ = raw_files[doy]
+        entry = {"doy": doy, "file": file_path.name}
+        if file_path.exists():
+            stat = file_path.stat()
+            entry.update(size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+        else:
+            entry["missing"] = True
+        files.append(entry)
+    return {
+        "format": RAW_SOURCE_FORMAT,
+        "version": RAW_SOURCE_VERSION,
+        "year": year,
+        "doy_start": doy_start,
+        "doy_end": doy_end,
+        "raw_dir": str(Path(data_dir).resolve()),
+        "files": files,
+    }
+
+
+def step0_config_fingerprint() -> dict:
+    """
+    The configuration that changes what Step 0 writes into the Parquet
+    files, as part of its identity: the station selection, each station's
+    UTC offset (columns 17-19, local time - used by Steps 4-6) and
+    coordinates (columns 20-21), and the QC thresholds (columns 22-25). In
+    web mode the selection and the offsets come from stations.json, whose
+    only fields Step 0 receives are code and utc_offset_hours; the order of
+    the stations does not matter. In automatic mode (every station found in
+    the RAW files) every configured station is included.
+    """
+    if USE_SELECTED_STATIONS:
+        selection, stations = "selected", sorted(SELECTED_STATIONS)
+    else:
+        selection, stations = "all_in_raw", sorted(set(STATION_UTC_OFFSETS) | set(STATION_METADATA))
+    return {
+        "station_selection": selection,
+        "station_config": {
+            station: {
+                "utc_offset_hours": STATION_UTC_OFFSETS.get(station),
+                "longitude_deg": STATION_METADATA.get(station, {}).get("longitude_deg"),
+                "latitude_deg": STATION_METADATA.get(station, {}).get("latitude_deg"),
+            }
+            for station in stations
+        },
+        "qc_thresholds": {
+            "min_elev_deg": QC_MIN_ELEV_DEG,
+            "required_ndat": QC_REQUIRED_NDAT,
+            "max_roti": QC_MAX_ROTI,
+        },
+    }
+
+
+def _describe_file(entry: dict) -> str:
+    if entry.get("missing"):
+        return f"{entry['file']} missing"
+    return f"{entry['file']} ({entry['size']:,} bytes, modified {entry['mtime_ns']})"
+
+
+def raw_source_differences(recorded: dict, current: dict) -> list[str]:
+    """
+    What differs between a recorded and a current fingerprint, as short
+    sentences ([] = same RAW input). Folders are compared with
+    os.path.normcase(), as Windows paths are case-insensitive.
+    """
+    differences = []
+    if recorded["year"] != current["year"]:
+        differences.append(f"year {current['year']} (record of {recorded['year']})")
+    if os.path.normcase(recorded["raw_dir"]) != os.path.normcase(current["raw_dir"]):
+        differences.append(f"RAW folder {current['raw_dir']} (built from {recorded['raw_dir']})")
+    if (recorded["doy_start"], recorded["doy_end"]) != (current["doy_start"], current["doy_end"]):
+        differences.append(
+            f"DoY range {current['doy_start']}-{current['doy_end']} "
+            f"(built from {recorded['doy_start']}-{recorded['doy_end']})"
+        )
+    if not differences:
+        changed = [
+            f"DoY {new['doy']:03d}: {_describe_file(new)}, was {_describe_file(old)}"
+            for old, new in zip(recorded["files"], current["files"]) if old != new
+        ]
+        if changed:
+            more = f" (and {len(changed) - 3} more)" if len(changed) > 3 else ""
+            differences.append(f"{len(changed)} RAW file(s) changed: " + "; ".join(changed[:3]) + more)
+    return differences
+
+
+def config_differences(recorded: dict, current: dict) -> list[str]:
+    """What differs in the Step 0 configuration (step0_config_fingerprint), as short sentences."""
+    labels = {"utc_offset_hours": "UTC offset", "longitude_deg": "longitude", "latitude_deg": "latitude"}
+    differences = []
+    if recorded["station_selection"] != current["station_selection"]:
+        differences.append(
+            f"station selection {current['station_selection']} (built with {recorded['station_selection']})"
+        )
+    old, new = recorded["station_config"], current["station_config"]
+    added, removed = sorted(set(new) - set(old)), sorted(set(old) - set(new))
+    if added:
+        differences.append("stations added: " + ", ".join(added))
+    if removed:
+        differences.append("stations removed: " + ", ".join(removed))
+    for station in sorted(set(old) & set(new)):
+        for key, label in labels.items():
+            if old[station].get(key) != new[station].get(key):
+                differences.append(f"{station} {label}: {old[station].get(key)} -> {new[station].get(key)}")
+    for key, value in current["qc_thresholds"].items():
+        if recorded["qc_thresholds"].get(key) != value:
+            differences.append(f"QC threshold {key}: {recorded['qc_thresholds'].get(key)} -> {value}")
+    return differences
+
+
+def existing_year_files(year: int) -> list[Path]:
+    """Files already in results for `year`: <STATION>/{year}/... and global/{year}/..."""
+    return sorted(p for p in RESULTS_DIR.glob(f"*/{year}/**/*") if p.is_file())
+
+
+def check_raw_source(fingerprint: dict) -> None:
+    """
+    Pre-flight check of a whole Step 0 run, before anything is written.
+    Allowed: the year has no data yet, or its provenance record describes
+    exactly this RAW input and Step 0 configuration. Otherwise
+    RawSourceConflictError - the run would replace Parquet files under
+    completeness and results built from other (or unverifiable) input.
+    Nothing is deleted.
+    """
+    year = fingerprint["year"]
+    record_path = raw_source_manifest_path(year)
+    advice = (
+        f"Step 0 stopped before writing anything: the existing {year} Parquet files and every "
+        f"result built from them are unchanged. To build {year} from this input, first move "
+        f"or clear the existing {year} study - the {Path('<STATION>', str(year))} folders and "
+        f"{Path('global', str(year))} in {RESULTS_DIR}."
+    )
+    if record_path.exists():
+        try:
+            recorded = json.loads(record_path.read_text(encoding="utf-8"))
+            if (recorded.get("format"), recorded.get("version")) != (RAW_SOURCE_FORMAT, RAW_SOURCE_VERSION):
+                raise ValueError(f"unsupported format {recorded.get('format')!r} version {recorded.get('version')!r}")
+            raw_changes = raw_source_differences(recorded, fingerprint)
+            config_changes = config_differences(recorded, fingerprint)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise RawSourceConflictError(
+                f"The RAW provenance record {record_path} cannot be read "
+                f"({type(exc).__name__}: {exc}), so the source of the existing {year} data "
+                f"cannot be verified. {advice}"
+            ) from None
+        if raw_changes:
+            raise RawSourceConflictError(
+                f"The existing {year} data were built from a different RAW input or DoY range: "
+                + "; ".join(raw_changes + config_changes) + f". {advice}"
+            )
+        if config_changes:
+            raise RawSourceConflictError(
+                f"The RAW input is unchanged, but the configuration Step 0 writes into the Parquet "
+                f"files changed since the {year} data were built: " + "; ".join(config_changes)
+                + f". {advice}"
+            )
+        return
+
+    existing = existing_year_files(year)
+    if existing:
+        examples = ", ".join(str(p.relative_to(RESULTS_DIR)) for p in existing[:3])
+        raise RawSourceConflictError(
+            f"{year} data already exist in {RESULTS_DIR} ({len(existing)} files, e.g. {examples}) "
+            f"but were created before RAW provenance tracking, so their RAW source cannot be "
+            f"verified. Steps 1-6 can still use them. {advice}"
+        )
+
+
+def write_raw_source_manifest(fingerprint: dict) -> Path:
+    """
+    Writes the provenance record of a first build (an identical re-run keeps
+    the existing one). Written through a temporary file, so a reader never
+    sees a partial JSON.
+    """
+    path = raw_source_manifest_path(fingerprint["year"])
+    if path.exists():
+        return path
+    record = {
+        **fingerprint,
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # informative
+    }
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(record, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+# ======================================================================
 # [F] MAIN PROGRAM
 # ======================================================================
 
@@ -417,6 +713,15 @@ def main() -> None:
         raise AmbiguousRawFileError(
             "Ambiguous RAW files - leave a single file per day:\n" + "\n".join(ambiguous)
         )
+
+    # Provenance pre-flight for the whole run, before any folder or file is
+    # created: stops here if this year already holds data from another (or
+    # an unverifiable) RAW input or Step 0 configuration.
+    fingerprint = {
+        **raw_source_fingerprint(DATA_DIR, YEAR, DOY_START, DOY_END, raw_files),
+        **step0_config_fingerprint(),
+    }
+    check_raw_source(fingerprint)
 
     global_paths = resolve_global_paths(YEAR)
 
@@ -500,6 +805,11 @@ def main() -> None:
             f"{DOY_START}-{DOY_END}. Check the RAW directory and DoY range."
         )
 
+    # Every RAW file has been read and checked: record the input before the
+    # first Parquet is written, so an interrupted run can only be resumed
+    # from this same RAW input.
+    write_raw_source_manifest(fingerprint)
+
     summary_rows = []
 
     for station in sorted(station_frames):
@@ -557,6 +867,7 @@ def main() -> None:
     print("------------")
     print(f"RAW file inventory: {global_paths['inventory_csv']}")
     print(f"Station summary: {global_paths['station_summary_csv']}")
+    print(f"RAW provenance record: {raw_source_manifest_path(YEAR)}")
     print(
         f"Per-station Parquet files: {RESULTS_DIR}/<STATION>/{YEAR}/0_parquet/"
         f"0_<STATION>_{YEAR}_observations.parquet"

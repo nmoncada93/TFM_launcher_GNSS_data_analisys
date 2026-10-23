@@ -6,25 +6,29 @@ Step 5.2 - Cross-station comparison of Step 5 daypart exceedance frequencies.
 
 Reads the daypart_frequency.csv saved by 5-daypart_variability.py for each
 station and merges them into one comparison table (CSV) and one combined
-plot (PNG). Nothing is recomputed and the Step 0 Parquet is not read. A
-station without Step 5 output is skipped and reported, not fatal.
+plot (PNG). Nothing is recomputed and the Step 0 Parquet is not read.
+
+One comparison uses a single Ndat criterion (ndat_mode), DoY range and
+coverage threshold (th_cov) for every station: only the Step 5 outputs with
+that criterion and run tag (completeness_paths.run_tag) are read, and the
+comparison is written to its own <dir_tag> folder with the same run tag. A
+station without that exact Step 5 output is skipped and reported, never
+replaced by the output of another criterion, DoY range or threshold.
 
 Daypart-layout check: before merging, every compared station must have the
 same daypart_order/daypart/hour_range triplets. A month number always
 means the same month, but a daypart name depends on the DAYPARTS
 configuration of 5-daypart_variability.py, so merging by name alone could
 compare different time windows under the same label. A mismatch is a hard
-error (ValueError), unlike the th_cov check: a value computed with a
-slightly different coverage threshold is still comparable, but a "Night"
-that means 18-06 for one station and 00-06 for another is not.
+error (ValueError): a "Night" that means 18-06 for one station and 00-06
+for another cannot be compared.
 
-th_cov check: Step 5 output names do not encode th_cov, so this script can
-only check that each compared station has a Step 1 coverage CSV for the
-same th_cov. It is a best-effort check: it confirms that such a Step 1
-file exists, not that Step 5 was generated from it.
+th_cov check: as a further check, each compared station must also have the
+Step 1 completeness of the same criterion and th_cov (completeness_paths);
+a missing one is reported in th_cov_warnings.
 
-Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported().
+The analysed index (ROTI L1, S4 L1, ...) and its Ndat column, labels and
+unit come from index_config.py.
 """
 
 from pathlib import Path
@@ -33,6 +37,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+import completeness_paths
+import index_config as indices
 import ndat_filter
 import plot_style
 import project_paths
@@ -51,15 +57,13 @@ DOY_START = 1
 DOY_END = 366
 TH_COV = 0.75
 
-# Index to compare. Only "roti_l1" is scientifically implemented/validated.
-VALUE_COL = "roti_l1"
+# Index to compare: any key of index_config.INDEX_CONFIG (e.g. "roti_l1", "s4_l1").
+VALUE_COL = indices.DEFAULT_INDEX
 
-# Ndat criterion to compare across stations (see ndat_filter.py); "eq60"
-# is the official criterion of the study. Only used by main(): the web
-# interface passes the selected mode explicitly. With this default, the
-# untagged outputs of 5-daypart_variability.py's console default
-# (NDAT_MODE = None) are not read.
-NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
+# Ndat criterion of the comparison (a canonical ndat_filter mode): the
+# Step 5 outputs of this criterion are read for every station. "all" = ALL_NDAT.
+# Only used by main(): the web interface passes the selected mode explicitly.
+NDAT_MODE = "all"
 
 # Fixed colour per station (by name, not by list position): with the
 # default colour cycle, colours would shift whenever a station is missing.
@@ -71,73 +75,6 @@ PLOT_DPI = 250
 
 
 # ======================================================================
-# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL <-> UNIT
-# ======================================================================
-# Same index definitions as in Steps 2-6 (each script is self-contained).
-
-INDEX_CONFIG = {
-    "roti_l1": {
-        "parquet_column": "06_roti_l1",
-        "file_tag": "ROTIL1",
-        "label": "ROTI L1",
-        "unit": "TECU/min",
-        "scientifically_supported": True,
-    },
-    "roti_lgf": {
-        "parquet_column": "07_roti_lgf",
-        "file_tag": "ROTILGF",
-        "label": "ROTI LGF",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "roti_l2": {
-        "parquet_column": "12_roti_l2",
-        "file_tag": "ROTIL2",
-        "label": "ROTI L2",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "s4_l1": {
-        "parquet_column": "10_s4_l1",
-        "file_tag": "S4L1",
-        "label": "S4 L1",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-    "s4_l2": {
-        "parquet_column": "11_s4_l2",
-        "file_tag": "S4L2",
-        "label": "S4 L2",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-}
-
-
-def validate_index_supported(value_col: str) -> dict:
-    """
-    Same check as every other step: value_col must have a validated
-    scientific analysis, not just exist as a Parquet column.
-    """
-    if value_col not in INDEX_CONFIG:
-        raise ValueError(
-            f"Index '{value_col}' is not defined in INDEX_CONFIG. "
-            f"Known indices: {sorted(INDEX_CONFIG)}"
-        )
-
-    config = INDEX_CONFIG[value_col]
-
-    if not config["scientifically_supported"]:
-        raise ValueError(
-            f"Index '{value_col}' is available in the Parquet but its "
-            "Step 5 scientific analysis has not yet been "
-            "implemented/validated."
-        )
-
-    return config
-
-
-# ======================================================================
 # [C] PATH RESOLUTION
 # ======================================================================
 def resolve_station_daypart_csv(
@@ -145,65 +82,63 @@ def resolve_station_daypart_csv(
     year: int,
     doy_start: int,
     doy_end: int,
+    th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> Path:
     """
     Path to the daypart_frequency.csv saved by 5-daypart_variability.py
-    for one station. Mirrors the naming of its resolve_paths(), including
-    ndat_mode (None: untagged; a mode: dir_tag subfolder and file_tag
-    prefix tag).
+    for one station, Ndat criterion, DoY range and th_cov. Mirrors the
+    naming of its resolve_paths() (dir_tag subfolder, file_tag prefix tag
+    and run tag). Raises ValueError if ndat_mode is unknown.
     """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "5_daypart_variability" / value_col
+    ndat_dir = index_dir / ndat_config["dir_tag"]
+    prefix = f"5-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
-    if ndat_mode is None:
-        ndat_dir = index_dir
-        prefix = f"5-{station}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        ndat_dir = index_dir / ndat_config["dir_tag"]
-        prefix = f"5-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
-
-    doy_tag = f"DOY{doy_start}_{doy_end}"
-    return ndat_dir / f"{prefix}_{doy_tag}_daypart_frequency.csv"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
+    return ndat_dir / f"{prefix}_{run_tag}_daypart_frequency.csv"
 
 
 def resolve_station_coverage_csv(
-    station: str, year: int, doy_start: int, doy_end: int, th_cov: float
+    station: str, year: int, doy_start: int, doy_end: int, th_cov: float, ndat_mode: str = "all",
+    value_col: str = VALUE_COL,
 ) -> Path:
     """
-    Path to the Step 1 coverage CSV for one station - mirrors
-    1-completitud.py's own naming exactly. Used only for the th_cov
+    Path to the Step 1 completeness CSV of one station for this index, Ndat
+    criterion and th_cov (completeness_paths). Used only for the th_cov
     cross-check described in the module docstring.
     """
-    return (
-        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
-        / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
-    )
+    return completeness_paths.resolve_completeness_paths(
+        station, year, doy_start, doy_end, th_cov, ndat_mode, index=value_col
+    )["output_csv"]
 
 
 def resolve_comparison_paths(
     year: int,
+    doy_start: int,
+    doy_end: int,
+    th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
-    Output paths of the comparison, under results/global/{YEAR}/ (never
-    inside a station folder). ndat_mode=None: directly in
-    5_daypart_comparison/; a mode adds the value_col and
-    ndat_config["dir_tag"] subfolders.
+    Output paths of the comparison, under
+    results/global/{YEAR}/5_daypart_comparison/{VALUE_COL}/<dir_tag>/ (never
+    inside a station folder), with the run tag (DoY range, th_cov) in the
+    file names. Raises ValueError if ndat_mode is unknown.
     """
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "5_daypart_comparison"
 
-    if ndat_mode is None:
-        comparison_dir = base_dir
-        prefix = f"5-ALL_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        comparison_dir = base_dir / value_col / ndat_config["dir_tag"]
-        prefix = f"5-ALL_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    comparison_dir = base_dir / value_col / ndat_config["dir_tag"]
+    prefix = (
+        f"5-ALL_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+        f"_{completeness_paths.run_tag(doy_start, doy_end, th_cov)}"
+    )
 
     return {
         "comparison_dir": comparison_dir,
@@ -222,7 +157,7 @@ def run_daypart_comparison(
     doy_end: int = DOY_END,
     value_col: str = VALUE_COL,
     th_cov: float = TH_COV,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Reads the daypart_frequency.csv already saved by
@@ -231,29 +166,30 @@ def run_daypart_comparison(
     daypart, one column group per available station.
 
     Pure function: no prints, no file writes. Raises ValueError if
-    value_col is not scientifically supported, or if the compared
-    stations do not share the same daypart definition (a hard error, see
-    module docstring). Raises FileNotFoundError only if no requested
-    station has Step 5 output.
+    value_col is not scientifically supported, if ndat_mode is unknown,
+    or if the compared stations do not share the same daypart definition
+    (a hard error, see module docstring). Raises FileNotFoundError only if
+    no requested station has Step 5 output for ndat_mode.
 
-    Each station's CSV is looked up for exactly the given ndat_mode
-    (None: untagged path). There is no fallback to another mode: a
+    Every station is looked up for exactly the given ndat_mode, DoY range
+    and th_cov. There is no fallback to another criterion or threshold: a
     station without that output is reported in missing_stations with the
-    path that was checked. All stations share one ndat_mode, so Ndat
-    criteria are never mixed within a comparison.
+    criterion, th_cov and the path that was checked. All stations share one
+    ndat_mode and th_cov, so they are never mixed within a comparison.
     """
-    index_config = validate_index_supported(value_col)
-    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None
+    index_config = indices.validate_index_supported(value_col)
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    criterion = f"Ndat criterion '{ndat_mode}' ({ndat_config['label']}) and th_cov={th_cov}"
 
     available_frames: dict[str, pd.DataFrame] = {}
     missing_stations: dict[str, str] = {}
 
     for station in stations:
         csv_path = resolve_station_daypart_csv(
-            station, year, doy_start, doy_end, value_col, index_config, ndat_mode
+            station, year, doy_start, doy_end, th_cov, value_col, index_config, ndat_mode
         )
         if not csv_path.exists():
-            missing_stations[station] = f"Step 5 output not found: {csv_path}"
+            missing_stations[station] = f"Step 5 output for {criterion} not found: {csv_path}"
             continue
         available_frames[station] = pd.read_csv(csv_path, usecols=[
             "daypart_order", "daypart", "hour_range",
@@ -261,15 +197,14 @@ def run_daypart_comparison(
         ])
 
     if not available_frames:
-        ndat_note = f", ndat_mode='{ndat_mode}'" if ndat_mode is not None else ""
         raise FileNotFoundError(
-            f"No station has Step 5 output for value_col='{value_col}'{ndat_note}, "
+            f"No station has Step 5 output for value_col='{value_col}', {criterion}, "
             f"year={year}, DOY{doy_start}_{doy_end}. Run "
-            "5-daypart_variability.py for at least one station first."
+            "5-daypart_variability.py with the same Ndat criterion and coverage "
+            "threshold for at least one station first."
         )
 
-    # Daypart-definition consistency check - hard error, see module
-    # docstring for why this cannot be a soft warning like th_cov.
+    # Daypart-definition consistency check - hard error, see module docstring.
     reference_station = next(iter(available_frames))
     reference_layout = (
         available_frames[reference_station][["daypart_order", "daypart", "hour_range"]]
@@ -290,16 +225,15 @@ def run_daypart_comparison(
                 f"label.\n{station}:\n{layout}\n{reference_station}:\n{reference_layout}"
             )
 
-    # Best-effort th_cov cross-check - see module docstring for exactly
-    # what this does and does not guarantee.
+    # Further th_cov check - see module docstring.
     th_cov_warnings: dict[str, str] = {}
     for station in available_frames:
         coverage_csv = resolve_station_coverage_csv(
-            station, year, doy_start, doy_end, th_cov
+            station, year, doy_start, doy_end, th_cov, ndat_mode, value_col
         )
         if not coverage_csv.exists():
             th_cov_warnings[station] = (
-                f"No Step 1 coverage CSV found for th_cov={th_cov} "
+                f"No Step 1 completeness for {criterion} found "
                 f"({coverage_csv}). This station's Step 5 output may have "
                 "been generated with a different coverage threshold than "
                 "the other stations being compared."
@@ -439,7 +373,7 @@ def main():
     print("-" * 24)
     print(table.to_string(index=False))
 
-    paths = resolve_comparison_paths(YEAR, VALUE_COL, index_config, NDAT_MODE)
+    paths = resolve_comparison_paths(YEAR, DOY_START, DOY_END, TH_COV, VALUE_COL, index_config, NDAT_MODE)
     save_comparison_table(table, paths["output_csv"])
     save_comparison_plot(
         table, available, index_config, paths["output_png"], PLOT_DPI, SHOW_PLOTS,

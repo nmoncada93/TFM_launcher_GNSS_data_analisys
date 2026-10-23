@@ -159,27 +159,6 @@
         margin-right: 0.3em;
       }
 
-      /* The Ndat criterion lives here: it is the only setting that applies
-   to the whole page, so it belongs to the page chrome, not to a
-   section that looked like a step but ran nothing. */
-      .topbar-setting {
-        display: flex;
-        align-items: center;
-        gap: var(--s2);
-        font-size: var(--t-sm);
-        white-space: nowrap;
-      }
-      .topbar-setting label {
-        margin: 0;
-        font-size: var(--t-sm);
-        color: var(--ink-2);
-      }
-      .topbar-setting select {
-        width: auto;
-        min-width: 12.5rem;
-        margin: 0;
-      }
-
       /* ==================================================================
    Page head
    ================================================================== */
@@ -379,7 +358,7 @@
         align-items: end;
         margin-bottom: var(--s4);
       }
-      /* The RAW folder field takes a whole line of its own: a Windows path is
+      /* The RAW folder field takes a whole line of its own: an absolute path is
    long, and Browse... belongs right next to the field it fills. Inside
    .grid it would land in a 150px column and both would be unusable.
    Input and button are both 2.25rem tall, so they align without help. */
@@ -429,12 +408,64 @@
         border-color: var(--ink-3);
       }
 
-      input[type="checkbox"] {
+      input[type="checkbox"],
+      input[type="radio"] {
         width: auto;
         height: auto;
         margin: 0 0.4em 0 0;
         accent-color: var(--link);
         vertical-align: -0.1em;
+      }
+      input[readonly] {
+        background: var(--surface-2);
+      }
+      input:disabled,
+      select:disabled {
+        background: var(--surface-2);
+        color: var(--ink-3);
+        cursor: not-allowed;
+      }
+
+      /* Ndat criterion: Step 1 builds it (ALL_NDAT or operator + value);
+   Steps 2-6 pick one of those Step 1 already computed. The selector
+   texts are long ("40 <= Ndat <= 60 - 284 valid days"), so in a form
+   grid it takes two columns. */
+      .ndat-builder {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: var(--s2) var(--s4);
+        max-width: 900px;
+        margin: var(--s3) 0 0;
+      }
+      .ndat-builder-title {
+        align-self: center;
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+      }
+      .ndat-builder label {
+        margin: 0;
+      }
+      .ndat-builder .ndat-kind {
+        display: inline-flex;
+        align-items: center;
+        height: 2.25rem;
+        font-size: var(--t-sm);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .ndat-builder .ndat-builder-field {
+        width: 6.5rem;
+      }
+      .grid .ndat-field {
+        grid-column: span 2;
+      }
+      .ndat-cmp {
+        max-width: 22rem;
+      }
+      .option-toggle label:has(input:disabled) {
+        color: var(--ink-3);
+        cursor: not-allowed;
       }
 
       /* ==================================================================
@@ -476,6 +507,20 @@
       }
       button:active {
         background: #0e1215;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      button:not(.clear-btn):not(.btn-quiet):disabled:hover {
+        background: var(--action);
+        border-color: var(--action);
+      }
+      button.clear-btn:disabled:hover,
+      button.btn-quiet:disabled:hover {
+        background: var(--surface);
+        border-color: var(--rule-2);
+        color: var(--ink-2);
       }
 
       /* secondary: same size, no weight */
@@ -571,6 +616,49 @@
         background: var(--err-soft);
         border-color: #f0c3c5;
         color: var(--err);
+      }
+      /* Red errors and warnings carry a × (top-right) that removes just that
+   message - see makeDismissible(). The right padding keeps the text clear
+   of it; status lines and inline warnings shrink to their text so the ×
+   sits right after it instead of at the far edge of the column. */
+      .dismissible {
+        position: relative;
+        padding-right: 2.25rem;
+      }
+      .field-status.dismissible,
+      .inline-warning.dismissible {
+        width: fit-content;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .inline-warning {
+        color: #900;
+      }
+      button.dismiss-btn {
+        position: absolute;
+        top: 0.25rem;
+        right: 0.25rem;
+        width: 1.5rem;
+        height: 1.5rem;
+        padding: 0;
+        border: 0;
+        border-radius: 2px;
+        background: transparent;
+        color: inherit;
+        font-size: 1.1rem;
+        font-weight: 400;
+        line-height: 1;
+        opacity: 0.65;
+      }
+      .field-status.dismissible button.dismiss-btn,
+      .inline-warning.dismissible button.dismiss-btn {
+        top: -0.2rem;
+      }
+      button.dismiss-btn:hover,
+      button.dismiss-btn:focus-visible {
+        opacity: 1;
+        background: rgba(156, 33, 38, 0.1);
+        border: 0;
       }
       .result-card h3 {
         margin: 0 0 var(--s2);
@@ -734,6 +822,52 @@
       }
       .field-status.error {
         color: var(--err);
+      }
+
+      /* Index: the selector between Step 0 and Step 1, and the active index
+   always visible in the top bar. */
+      .topbar-index {
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+        text-decoration: none;
+        white-space: nowrap;
+        padding: var(--s1) var(--s2);
+        border: 1px solid var(--rule-2);
+        border-radius: 3px;
+      }
+      .topbar-index b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .index-field {
+        display: flex;
+        align-items: center;
+        gap: var(--s3);
+        margin-top: var(--s3);
+      }
+      .index-field label {
+        font-weight: 600;
+      }
+      .index-field select {
+        min-width: 12rem;
+      }
+
+      /* Step 0: expected RAW format, closed by default. */
+      details.raw-format {
+        margin: var(--s2) 0 0;
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+      }
+      details.raw-format summary {
+        cursor: pointer;
+        color: var(--link);
+      }
+      details.raw-format p {
+        margin: var(--s2) 0;
+      }
+      details.raw-format ol {
+        margin: var(--s2) 0;
+        padding-left: 1.8em;
       }
 
       details {
@@ -1001,15 +1135,9 @@
           <a href="#step5"><b>5</b>Daypart</a>
           <a href="#step6"><b>6</b>Heatmaps</a>
         </nav>
-        <div class="topbar-setting">
-          <label for="ndat-mode">Ndat criterion</label>
-          <select id="ndat-mode">
-            <option value="eq60" selected>Ndat = 60 (TFM default)</option>
-            <option value="ge30">30 &le; Ndat &le; 60</option>
-            <option value="all">All Ndat</option>
-            <option value="lt30">Ndat &lt; 30</option>
-          </select>
-        </div>
+        <a class="topbar-index" href="#analysis-index" title="Index analysed by Steps 1-6 - change it after Step 0"
+          >Index: <b id="topbar-index-label">ROTI L1</b></a
+        >
       </div>
     </header>
     <h1>GNSS Ionospheric Data Analysis</h1>
@@ -1022,10 +1150,14 @@
       its console script - results are saved to the same place as always
       (<code>results/&lt;station&gt;/&lt;year&gt;/...</code>).
       <strong>Step 0 runs first</strong> and builds the Parquet files every
-      other step reads. Steps 1-6 are connected. The
-      <strong>Ndat criterion</strong> in the bar above applies to Steps 2-6;
-      Step 1 completeness (valid/invalid days) is independent of Ndat - Step 1
-      only uses it for its optional, informative Ndat-impact diagnostic.
+      other step reads. Steps 1-6 are connected. Each
+      <strong>Ndat criterion</strong> has its own completeness: Step 1
+      computes ALL_NDAT and, optionally, one custom criterion. Every block of
+      Steps 2-6 has its own Ndat criterion selector, which lists only the
+      criteria Step 1 has computed for that block's station, year, DoY range
+      and coverage threshold. The <strong>Index</strong> selector, after Step
+      0, chooses the variable Steps 1-6 analyse (ROTI L1, ROTI LGF, ROTI L2,
+      S4 L1, S4 L2); each index has its own completeness and results.
     </p>
 
     <section id="step0">
@@ -1044,11 +1176,14 @@
         <strong>no scientific analysis</strong>: nothing is filtered or removed,
         and the QC flag columns it writes are informational only. Every
         configured station is always processed in a single pass, because each
-        daily RAW file already mixes all stations together.
+        daily RAW file already mixes all stations together. The first run of
+        a year records its RAW input (folder, DoY range, files); a later run
+        for that year must use exactly the same input, otherwise it stops
+        without changing anything.
       </p>
 
       <div class="dir-field">
-        <label for="step0-raw-dir">RAW data folder</label>
+        <label for="step0-raw-dir">RAW input folder (source data)</label>
         <div class="dir-row">
           <button id="step0-browse" class="btn-quiet" onclick="browseRawDir()">
             Browse...
@@ -1063,10 +1198,54 @@
           <code>roti.2025120.gz</code>), as long as there is only one per
           day. Formats: plain, <code>.gz</code>, <code>.tmp</code> or
           <code>.tmp.gz</code>. Relative paths resolve against the
-          folder the server was started from; an absolute path
-          (<code>D:\data\datos_2024</code>) also works.
+          folder the server was started from; an absolute path also
+          works (Windows: <code>D:\data\datos_2024</code>, Linux:
+          <code>/home/user/data/datos_2024</code>).
         </p>
         <p id="step0-status" class="field-status"></p>
+        <details class="raw-format">
+          <summary>Expected RAW data format</summary>
+          <p>
+            Preferred file name <code>rotiS4.YYYYDDD</code>. Each line has
+            <strong>12 whitespace-separated positional columns</strong>; no
+            header is expected. A file with another number of columns on any
+            line stops Step 0 with an error naming the file.
+          </p>
+          <ol>
+            <li>Second of the day (GPS time)</li>
+            <li>Receiver name</li>
+            <li>Satellite number (1–32 GPS; &gt;40 Galileo)</li>
+            <li>Satellite elevation [0, 90] deg</li>
+            <li>Satellite azimuth (−180, 180] deg (0 North, 90 East)</li>
+            <li>ROTI from L1 [TECU/min]</li>
+            <li>ROTI from LGF [TECU/min]</li>
+            <li>Ndat(ROTI L1): number of data used to calculate ROTI L1 and S4</li>
+            <li>Ndat(ROTI LGF): number of data used to calculate ROTI LGF</li>
+            <li>S4 from L1</li>
+            <li>S4 from L2</li>
+            <li>ROTI from L2 [TECU/min]</li>
+          </ol>
+          <p>
+            Column 8 is used as Ndat for ROTI L1, S4 L1, S4 L2 and ROTI L2.
+            Column 9 is used as Ndat for ROTI LGF.
+          </p>
+        </details>
+      </div>
+
+      <div class="dir-field">
+        <label for="results-root">Output - results folder (derived data)</label>
+        <div class="dir-row">
+          <button id="open-results-folder" class="btn-quiet" onclick="openResultsFolder()">
+            Open results folder
+          </button>
+          <input id="results-root" type="text" value="Loading..." readonly />
+        </div>
+        <p class="field-note">
+          Where every step writes what it derives from the RAW input: the
+          Parquet files, the completeness and the results of Steps 1-6. Set by
+          the application, not editable here.
+        </p>
+        <p id="results-root-status" class="field-status" aria-live="polite"></p>
       </div>
 
       <div class="grid">
@@ -1108,6 +1287,26 @@
       <div id="step0-grid" class="grid-results"></div>
     </section>
 
+    <section id="analysis-index">
+      <div class="step-head">
+        <h2>Index - variable analysed by Steps 1-6</h2>
+        <span class="dep">Step 0 keeps every index</span>
+      </div>
+      <div class="index-field">
+        <label for="analysis-index-select">Index</label>
+        <select id="analysis-index-select" autocomplete="off">
+          <option value="roti_l1">ROTI L1</option>
+        </select>
+      </div>
+      <p class="field-note">
+        Steps 1-6 and their comparisons analyse this index. Each index has its
+        own completeness and results, labelled with it on every card, row and
+        download. Ndat uses column 8 for ROTI L1, S4 L1, S4 L2 and ROTI L2,
+        column 9 for ROTI LGF; S4 is dimensionless and 0 is a valid value.
+      </p>
+      <p id="analysis-index-status" class="field-status" aria-live="polite"></p>
+    </section>
+
     <section id="step1">
       <div class="step-head">
         <span class="step-num">01</span>
@@ -1117,11 +1316,15 @@
       </div>
 
       <p class="intro" style="margin-top: 0.75rem">
-        Step 1 measures <strong>temporal data availability</strong>: a day is
-        valid when at least the selected proportion of its 1440 minutes
-        contains one or more observations. Only days classified as valid are
-        selected for Steps 2–6, where the Ndat criterion is subsequently
-        applied at observation level. <strong>DoY</strong> = day of year.
+        Step 1 measures <strong>temporal data availability</strong> of the
+        selected <strong>Index</strong>: a day is valid when at least the
+        selected proportion of its 1440 minutes contains one or more
+        observations with a valid (finite) value of that index - 0 is a valid
+        value. ALL_NDAT counts every such observation; a custom Ndat criterion
+        first keeps only the observations that satisfy it, so it has its own
+        valid days. Each index has its own completeness. Steps 2–6 use the
+        valid days and the observations of the criterion chosen in their own
+        selector. <strong>DoY</strong> = day of year.
       </p>
 
       <div class="grid">
@@ -1147,15 +1350,53 @@
           <input id="step1-th-cov" type="number" step="0.01" value="0.75" />
         </label>
       </div>
+      <div class="ndat-builder">
+        <span class="ndat-builder-title">Ndat criterion</span>
+        <label class="ndat-kind"
+          ><input type="radio" name="step1-ndat-kind" value="all" checked autocomplete="off" />
+          ALL_NDAT</label
+        >
+        <label class="ndat-kind"
+          ><input type="radio" name="step1-ndat-kind" value="custom" autocomplete="off" />
+          Custom</label
+        >
+        <label class="ndat-builder-field"
+          >Operator
+          <select id="step1-ndat-operator" disabled autocomplete="off">
+            <option value="=">=</option>
+            <option value="&gt;=">&gt;=</option>
+            <option value="&lt;">&lt;</option>
+          </select>
+        </label>
+        <label class="ndat-builder-field"
+          >Ndat
+          <input
+            id="step1-ndat-value"
+            type="number"
+            min="1"
+            max="60"
+            step="1"
+            value="60"
+            disabled
+            autocomplete="off"
+          />
+        </label>
+      </div>
+      <p class="field-note">
+        A custom criterion is always computed together with ALL_NDAT for the
+        same settings. Ndat is the number of samples behind each value
+        (1 to 60): column 8 of the RAW files for ROTI L1, S4 L1, S4 L2 and
+        ROTI L2, column 9 for ROTI LGF.
+      </p>
+      <p id="step1-ndat-status" class="field-status" aria-live="polite"></p>
       <div class="option-toggle">
         <label
-          ><input type="checkbox" id="step1-ndat-impact" /> Show Ndat impact on
-          completeness</label
+          ><input type="checkbox" id="step1-ndat-impact" disabled autocomplete="off" /> Show
+          Ndat impact on completeness</label
         >
         <p class="field-note">
-          Uses the <strong>Ndat criterion</strong> selected in the top bar.
-          Diagnostic only: the official Step 1 valid-day selection used by
-          Steps 2–6 is unchanged.
+          Custom criterion only: compares ALL_NDAT with that criterion.
+          Diagnostic only: it does not change any completeness.
         </p>
       </div>
       <div class="actions">
@@ -1168,7 +1409,11 @@
         <thead>
           <tr>
             <th>Station</th>
+            <th>Criterion</th>
+            <th>Index</th>
             <th>Year</th>
+            <th>DoY</th>
+            <th>TH</th>
             <th id="step1-col-valid-days">Valid days [out of N]</th>
             <th>Invalid days</th>
             <th id="step1-col-mean-coverage">Mean coverage over N days [%]</th>
@@ -1184,19 +1429,23 @@
       <div id="step1-explanation"></div>
       <table class="summary" id="step1-ndat-summary">
         <caption>
-          Ndat impact on completeness (<span id="step1-ndat-params"></span>).
-          Informative only: it does not change the valid days above or the
-          days used by Steps 2-6. Observations and minutes refer to the valid
-          days; annual coverage to every DoY.
+          Ndat impact on completeness: how each custom criterion changes
+          completeness relative to ALL_NDAT. Observations and minutes refer to
+          the ALL_NDAT valid days; annual coverage to every DoY.
         </caption>
         <thead>
           <tr>
             <th>Station</th>
+            <th>Criterion</th>
+            <th>Index</th>
+            <th>Year</th>
+            <th>DoY</th>
+            <th>TH</th>
             <th>Observations discarded [%]</th>
             <th>Temporal minutes lost [%]</th>
             <th>Valid days</th>
-            <th id="step1-ndat-col-valid-after">Valid days after Ndat</th>
-            <th id="step1-ndat-col-below">Days below threshold after Ndat</th>
+            <th>Valid days after Ndat</th>
+            <th>Days below threshold after Ndat</th>
             <th>Annual temporal coverage before &rarr; after Ndat</th>
           </tr>
         </thead>
@@ -1207,10 +1456,15 @@
         <thead>
           <tr>
             <th>Station</th>
+            <th>Criterion</th>
+            <th>Index</th>
+            <th>Year</th>
+            <th>DoY</th>
+            <th>TH</th>
             <th>Valid days</th>
-            <th id="step1-ndat-groups-col-above">At or above threshold</th>
-            <th id="step1-ndat-groups-col-band">Within band below threshold</th>
-            <th id="step1-ndat-groups-col-below">Below band</th>
+            <th>At or above threshold</th>
+            <th>Within band below threshold</th>
+            <th>Below band</th>
           </tr>
         </thead>
         <tbody id="step1-ndat-groups-body"></tbody>
@@ -1232,15 +1486,22 @@
       <h3>2A. Monthly percentile analysis</h3>
       <p class="intro">
         <strong>Purpose:</strong> Step 2 characterizes the monthly distribution
-        and variability of ROTI L1 using observations from days classified as
+        and variability of <span class="index-name">ROTI L1</span> using observations from days classified as
         valid in Step 1, after applying the selected Ndat criterion at
         observation level. Monthly p90 and p99 describe the upper part of the
-        ROTI L1 distribution and allow its seasonal variability to be compared
+        <span class="index-name">ROTI L1</span> distribution and allow its seasonal variability to be compared
         across the year.
       </p>
       <p class="intro">
         Requires Step 1 to already exist for that station (Step 2 reads its
         coverage CSV).
+      </p>
+      <p class="intro">
+        <strong>Monthly validity:</strong> a minimum of 10 valid days (10
+        included) is required for the monthly extrema and range of the
+        summary table. A month with fewer valid days is still computed and
+        kept in the CSV, the CCDFs and the plots; the percentile plots and
+        the CCDF comparison notes flag it as low support.
       </p>
 
       <div class="grid">
@@ -1265,9 +1526,15 @@
           >Coverage threshold
           <input id="step2-th-cov" type="number" step="0.01" value="0.75" />
         </label>
+        <label class="ndat-field"
+          >Ndat criterion
+          <select id="step2-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
-        <button onclick="runStep2()">Run</button>
+        <button id="step2-run" onclick="runStep2()" disabled>Run</button>
         <button class="clear-btn" onclick="clearStep(2)">
           Clear
         </button>
@@ -1276,11 +1543,15 @@
         <thead>
           <tr>
             <th>Station</th>
+            <th>Criterion</th>
+            <th>Index</th>
             <th>Year</th>
+            <th>DoY</th>
+            <th>TH</th>
             <th>p90 summary</th>
-            <th>p90 range [TECU/min]</th>
+            <th>p90 range</th>
             <th>p99 summary</th>
-            <th>p99 range [TECU/min]</th>
+            <th>p99 range</th>
           </tr>
         </thead>
         <tbody id="step2-summary-body"></tbody>
@@ -1293,7 +1564,7 @@
       <div class="subsection">
         <h3>2B. Monthly CCDF analysis</h3>
         <p class="intro">
-          <strong>Purpose:</strong> The CCDF shows the fraction of ROTI L1
+          <strong>Purpose:</strong> The CCDF shows the fraction of <span class="index-name">ROTI L1</span>
           observations equal to or greater than a given value. It provides the
           full upper-tail distribution behind the monthly percentiles instead of
           reducing each month to only p90 and p99.
@@ -1304,7 +1575,7 @@
           <li>CCDF = 0.01 corresponds approximately to p99.</li>
           <li>The Y axis is logarithmic.</li>
           <li>
-            <code>n</code> in the legend is the number of ROTI L1 observations
+            <code>n</code> in the legend is the number of <span class="index-name">ROTI L1</span> observations
             used for that curve.
           </li>
           <li>
@@ -1319,11 +1590,19 @@
           </summary>
           <p class="intro">
             All individual monthly CCDF plots already saved by Step 2, for the
-            Year/DoY/threshold set above - 12 months &times; each station in stations.json. Loads
-            once when you open this section, does not recompute anything.
-            &ldquo;&mdash;&rdquo; means that station/month has no Step 2 output
-            yet at these settings.
+            Year/DoY/threshold set above and the Ndat criterion below - 12
+            months &times; each station in stations.json. Loads once when you
+            open this section, and again when the criterion changes; does not
+            recompute anything. &ldquo;&mdash;&rdquo; means that station/month
+            has no Step 2 output yet at these settings.
           </p>
+
+          <label class="ndat-cmp"
+            >Ndat criterion
+            <select id="step2-grid-ndat" disabled>
+              <option value="">Loading...</option>
+            </select>
+          </label>
 
           <div class="station-filter" id="step2-ccdf-grid-station-filter"></div>
 
@@ -1342,6 +1621,12 @@
         <label style="max-width: 200px"
           >Station
           <select id="step2-ccdf-station">
+          </select>
+        </label>
+        <label class="ndat-cmp"
+          >Ndat criterion
+          <select id="step2-ccdf-ndat" disabled>
+            <option value="">Loading...</option>
           </select>
         </label>
 
@@ -1374,7 +1659,9 @@
           >
             Clear selection
           </button>
-          <button onclick="runStep2CcdfCompare()">Compare months</button>
+          <button id="step2-ccdf-run" onclick="runStep2CcdfCompare()" disabled>
+            Compare months
+          </button>
           <button
             class="clear-btn"
             onclick="clearGrid('step2-ccdf-compare-grid')"
@@ -1394,15 +1681,15 @@
       <div class="subsection">
         <h3>2C. Cross-station analysis</h3>
         <p class="intro">
-          <strong>Purpose:</strong> This section compares the monthly ROTI L1
+          <strong>Purpose:</strong> This section compares the monthly <span class="index-name">ROTI L1</span>
           distributions between stations using the outputs already generated by
           Step 2.
         </p>
         <h4 style="margin-bottom: 0.3rem">Interpretation notes</h4>
         <ul style="margin-top: 0">
           <li>
-            Monthly percentile comparison compares absolute p90/p99 values in
-            TECU/min between stations.
+            Monthly percentile comparison compares absolute p90/p99 values
+            (in the unit of the index) between stations.
           </li>
           <li><code>n_days</code> indicates monthly temporal support.</li>
           <li>Low-support status is station-specific.</li>
@@ -1412,6 +1699,18 @@
           </li>
         </ul>
 
+        <label class="ndat-cmp"
+          >Ndat criterion
+          <select id="step2-cmp-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
+        <p class="field-note">
+          Used by both comparisons below. Lists the criteria with a Step 1
+          completeness for at least one station; stations without it are
+          reported as missing.
+        </p>
+
         <h4 style="margin-top: 1.5rem">Cross-station monthly percentiles</h4>
         <p class="intro">
           Compares all stations for which Step 2 output is available for the
@@ -1420,7 +1719,9 @@
           missing here.
         </p>
         <div class="actions">
-          <button onclick="runStep2_2()">Compare all stations</button>
+          <button id="step22-run" onclick="runStep2_2()" disabled>
+            Compare all stations
+          </button>
           <button class="clear-btn" onclick="clearGrid('step22-grid')">
             Clear
           </button>
@@ -1455,7 +1756,13 @@
         </label>
 
         <div class="actions">
-          <button onclick="runStep2CrossStationCcdf()">Compare stations</button>
+          <button
+            id="step2-cross-station-run"
+            onclick="runStep2CrossStationCcdf()"
+            disabled
+          >
+            Compare stations
+          </button>
           <button
             class="clear-btn"
             onclick="clearGrid('step2-cross-station-grid')"
@@ -1511,9 +1818,15 @@
           >Coverage threshold
           <input id="step3-th-cov" type="number" step="0.01" value="0.75" />
         </label>
+        <label class="ndat-field"
+          >Ndat criterion
+          <select id="step3-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
-        <button onclick="runStep3()">Run</button>
+        <button id="step3-run" onclick="runStep3()" disabled>Run</button>
         <button class="clear-btn" onclick="clearStep(3)">
           Clear
         </button>
@@ -1522,10 +1835,14 @@
         <thead>
           <tr>
             <th>Station</th>
+            <th>Criterion</th>
+            <th>Index</th>
             <th>Year</th>
+            <th>DoY</th>
+            <th>TH</th>
             <th>n_values</th>
-            <th>p90 annual [TECU/min]</th>
-            <th>p99 annual [TECU/min]</th>
+            <th>p90 annual</th>
+            <th>p99 annual</th>
           </tr>
         </thead>
         <tbody id="step3-summary-body"></tbody>
@@ -1543,17 +1860,25 @@
           maximum p90/p99 exceedance frequency, and which dates show up in the
           top-N days of 2 or more stations at once. A shared date means that each
           station involved was evaluated relative to its own annual threshold;
-          it does not mean that the stations had the same absolute ROTI L1
+          it does not mean that the stations had the same absolute <span class="index-name">ROTI L1</span>
           value on that day.
         </p>
 
+        <label class="ndat-cmp"
+          >Ndat criterion
+          <select id="step3-cmp-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
         <label style="max-width: 200px"
           >Top N days
           <input id="step3-top-n" type="number" value="10" min="1" />
         </label>
 
         <div class="actions">
-          <button onclick="runStep3Comparison()">Compare stations</button>
+          <button id="step3-cmp-run" onclick="runStep3Comparison()" disabled>
+            Compare stations
+          </button>
           <button
             class="clear-btn"
             onclick="clearGrid('step3-comparison-grid')"
@@ -1603,9 +1928,15 @@
           >Coverage threshold
           <input id="step4-th-cov" type="number" step="0.01" value="0.75" />
         </label>
+        <label class="ndat-field"
+          >Ndat criterion
+          <select id="step4-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
-        <button onclick="runStep4()">Run</button>
+        <button id="step4-run" onclick="runStep4()" disabled>Run</button>
         <button class="clear-btn" onclick="clearStep(4)">
           Clear
         </button>
@@ -1614,7 +1945,11 @@
         <thead>
           <tr>
             <th>Station</th>
+            <th>Criterion</th>
+            <th>Index</th>
             <th>Year</th>
+            <th>DoY</th>
+            <th>TH</th>
             <th>Max p90 hour(s)</th>
             <th>Max p90 freq [%]</th>
             <th>Support</th>
@@ -1636,7 +1971,7 @@
           Year/DoY range set above - reads what 4.2-hourly_comparison.py already
           saved, does not recompute anything. Each station uses its own annual
           p90/p99 threshold, so this compares relative exceedance frequency by
-          local hour between stations, not absolute ROTI L1 magnitude.
+          local hour between stations, not absolute <span class="index-name">ROTI L1</span> magnitude.
         </p>
 
         <p class="intro" style="margin-top: 0.5rem">
@@ -1646,8 +1981,17 @@
           separate peaks.
         </p>
 
+        <label class="ndat-cmp"
+          >Ndat criterion
+          <select id="step4-cmp-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
+
         <div class="actions">
-          <button onclick="runStep4Comparison()">Compare stations</button>
+          <button id="step4-cmp-run" onclick="runStep4Comparison()" disabled>
+            Compare stations
+          </button>
           <button
             class="clear-btn"
             onclick="clearGrid('step4-comparison-grid')"
@@ -1698,9 +2042,15 @@
           >Coverage threshold
           <input id="step5-th-cov" type="number" step="0.01" value="0.75" />
         </label>
+        <label class="ndat-field"
+          >Ndat criterion
+          <select id="step5-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
-        <button onclick="runStep5()">Run</button>
+        <button id="step5-run" onclick="runStep5()" disabled>Run</button>
         <button class="clear-btn" onclick="clearStep(5)">
           Clear
         </button>
@@ -1709,7 +2059,11 @@
         <thead>
           <tr>
             <th>Station</th>
+            <th>Criterion</th>
+            <th>Index</th>
             <th>Year</th>
+            <th>DoY</th>
+            <th>TH</th>
             <th>Dominant daypart (p90)</th>
             <th>Freq [%]</th>
             <th>Support</th>
@@ -1731,11 +2085,20 @@
           Year/DoY range set above - reads what 5.2-daypart_comparison.py
           already saved, does not recompute anything. Each station uses its own
           annual p90/p99 threshold, so this compares relative exceedance
-          frequency by daypart between stations, not absolute ROTI L1 magnitude.
+          frequency by daypart between stations, not absolute <span class="index-name">ROTI L1</span> magnitude.
         </p>
 
+        <label class="ndat-cmp"
+          >Ndat criterion
+          <select id="step5-cmp-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
+
         <div class="actions">
-          <button onclick="runStep5Comparison()">Compare stations</button>
+          <button id="step5-cmp-run" onclick="runStep5Comparison()" disabled>
+            Compare stations
+          </button>
           <button
             class="clear-btn"
             onclick="clearGrid('step5-comparison-grid')"
@@ -1795,9 +2158,15 @@
           >Coverage threshold
           <input id="step6-th-cov" type="number" step="0.01" value="0.75" />
         </label>
+        <label class="ndat-field"
+          >Ndat criterion
+          <select id="step6-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
       </div>
       <div class="actions">
-        <button onclick="runStep6()">Run</button>
+        <button id="step6-run" onclick="runStep6()" disabled>Run</button>
         <button class="clear-btn" onclick="clearStep(6)">
           Clear
         </button>
@@ -1813,12 +2182,19 @@
           Year/DoY/coverage threshold set above - reads the rank-1 row already
           saved in each station's Top-10 p90/p99 CSVs, does not recompute
           anything. Each station uses its own annual p90/p99 threshold, so this
-          compares relative exceedance frequency, not absolute ROTI L1
+          compares relative exceedance frequency, not absolute <span class="index-name">ROTI L1</span>
           magnitude.
         </p>
 
+        <label class="ndat-cmp"
+          >Ndat criterion
+          <select id="step6-cmp-ndat" disabled>
+            <option value="">Loading...</option>
+          </select>
+        </label>
+
         <div class="actions">
-          <button onclick="runStep6CrossStationMaxima()">
+          <button id="step6-cmp-run" onclick="runStep6CrossStationMaxima()" disabled>
             Compare stations
           </button>
           <button class="clear-btn" onclick="clearGrid('step6-maxima-grid')">
@@ -2002,20 +2378,31 @@
       function clearStep(stepNumber) {
         STEP_OUTPUT_IDS[stepNumber].forEach((id) => clearGrid(id));
         if (stepNumber === 0) setFieldStatus("step0-status", "", false);
+        if (stepNumber === 1) setFieldStatus("step1-ndat-status", "", false);
         setStepState(`step${stepNumber}-grid`, null);
       }
 
-      // Single source of truth for the Ndat criterion selected in "General
-      // Analysis Configuration" - reads the DOM only, no scientific logic.
-      // Used by every Steps 2-6 run function/comparator below. Step 1 calls
-      // it only for its optional Ndat-impact diagnostic - its valid/invalid
-      // status is independent of Ndat.
-      function getNdatMode() {
-        return document.getElementById("ndat-mode").value;
+      function escapeHtml(text) {
+        return String(text)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
       }
 
-      // One row per station - always shows that station's latest run, unlike
-      // the card grid which keeps every distinct parameter combination.
+      // Mode and label of the criterion chosen in one of the Ndat selectors
+      // of Steps 2-6 (see refreshNdatSelect), or null while it lists none -
+      // its Run buttons are disabled then. The label is the one the server
+      // gave for that mode, shown on the cards, rows and download lines.
+      function ndatChoice(selectId) {
+        const option = document.getElementById(selectId).selectedOptions[0];
+        if (!option || !option.value) return null;
+        return { mode: option.value, label: option.dataset.label };
+      }
+
+      // One row per station and Ndat criterion - always shows the latest run
+      // of that pair, unlike the card grid which keeps every distinct
+      // parameter combination.
       // Ties are shown in full, joined with "; " - a station can have
       // more than one longest streak or more than one best/worst month
       // (e.g. WHIT has two 5-day invalid streaks, DoY 9-13 and 54-58).
@@ -2055,14 +2442,74 @@
           `</ul>`;
       }
 
-      function upsertSummaryRow(tbodyId, station, data) {
-        const tbody = document.getElementById(tbodyId);
-        let row = tbody.querySelector(`[data-station="${station}"]`);
+      // Identity of one run on the page - station, year, DoY range, threshold
+      // and Ndat criterion, the parameters its output files depend on - so
+      // runs that differ in any of them keep their own summary rows,
+      // diagnostic rows and download lines (the cards use the same key).
+      // p is the request payload of the run.
+      function runKey(p, mode) {
+        return [p.station, p.index || "", p.year, p.doy_start, p.doy_end, p.th_cov, mode].join("|");
+      }
+
+      // Index, Year, DoY and TH cells that tell such rows apart in the tables.
+      function runCells(p) {
+        return (
+          `<td>${escapeHtml(indexLabel(p.index))}</td>` +
+          `<td>${p.year}</td><td style="white-space:nowrap">${p.doy_start}-${p.doy_end}</td>` +
+          `<td>${p.th_cov}</td>`
+        );
+      }
+
+      // Visible settings of a run, in card titles and download lines.
+      function runSettings(p) {
+        const index = p.index ? `${escapeHtml(indexLabel(p.index))} · ` : "";
+        return `${index}${p.year}, DoY ${p.doy_start}-${p.doy_end}, TH ${p.th_cov}`;
+      }
+
+      // Index analysed by Steps 1-6 and the comparisons: the selector between
+      // Step 0 and Step 1 (options from /api/indices, i.e. index_config.py).
+      // Every request of those steps sends it and it is part of runKey(), so
+      // cards, rows and downloads of different indices never mix.
+      let INDEX_INFO = { roti_l1: { index: "roti_l1", label: "ROTI L1", unit: "TECU/min", supported: true } };
+
+      function currentIndex() {
+        return document.getElementById("analysis-index-select").value || "roti_l1";
+      }
+
+      function indexLabel(index) {
+        return (INDEX_INFO[index] && INDEX_INFO[index].label) || index || "";
+      }
+
+      // "0.53 TECU/min", or just "0.53" for a dimensionless index (S4).
+      function withUnit(text, index) {
+        const unit = INDEX_INFO[index] ? INDEX_INFO[index].unit : "";
+        return unit ? `${text} ${unit}` : text;
+      }
+
+      // " [TECU/min]" in a header, or nothing for a dimensionless index - never "[]".
+      function unitSuffix(index) {
+        const unit = INDEX_INFO[index] ? INDEX_INFO[index].unit : "";
+        return unit ? ` [${unit}]` : "";
+      }
+
+      function runLabel(p, label) {
+        return `${p.station} (${runSettings(p)}) - ${escapeHtml(label)}`;
+      }
+
+      function findOrAddRow(tbody, key) {
+        let row = tbody.querySelector(`[data-key="${key}"]`);
         if (!row) {
           row = document.createElement("tr");
-          row.dataset.station = station;
+          row.dataset.key = key;
           tbody.appendChild(row);
         }
+        return row;
+      }
+
+      // p = the Step 1 request; data = one entry of its "completeness" list.
+      function upsertSummaryRow(tbodyId, p, data) {
+        const tbody = document.getElementById(tbodyId);
+        const row = findOrAddRow(tbody, runKey(p, data.mode));
         const streak = formatStreaks(
           data.longest_invalid_streaks,
           data.longest_invalid_streak,
@@ -2074,7 +2521,7 @@
         const meanValid = data.mean_valid_day_coverage_pct;
         row.dataset.nTotal = data.n_total_days;
         row.innerHTML =
-          `<td>${data.station}</td><td>${data.year}</td>` +
+          `<td>${p.station}</td><td>${escapeHtml(data.label)}</td>${runCells(p)}` +
           `<td>${data.n_valid_days}<br>(${pct(data.coverage_pct)})</td>` +
           `<td>${data.n_invalid_days}</td>` +
           `<td>${pct(data.overall_coverage_pct)}</td>` +
@@ -2099,40 +2546,21 @@
           `Mean coverage over ${n} days [%]`;
       }
 
-      // Optional Step 1 Ndat-impact DIAGNOSTIC row - same find-or-create-by-
-      // station pattern as upsertSummaryRow(). Presentation only: every
-      // number comes from run_ndat_impact() in 1-completitud.py, with its two
-      // scopes kept apart (filter_on_valid_days / completeness_all_doys).
-      // The table has one header for all rows, built from this run's Ndat
-      // criterion and threshold, so rows from other parameters are dropped.
-      function upsertNdatImpactRow(tbodyId, station, impact) {
-        const tbody = document.getElementById(tbodyId);
-        const params = `${impact.ndat_mode}|${impact.th_cov}`;
-        tbody.querySelectorAll("tr").forEach((r) => {
-          if (r.dataset.params !== params) r.remove();
-        });
-        let row = tbody.querySelector(`[data-station="${station}"]`);
-        if (!row) {
-          row = document.createElement("tr");
-          row.dataset.station = station;
-          tbody.appendChild(row);
-        }
-        row.dataset.params = params;
-
-        const ndat = impact.ndat_label.replace(" = ", "="); // "Ndat = 60" -> "Ndat=60"
-        const th = Number((impact.th_cov * 100).toFixed(2)); // 0.75 -> 75
-        document.getElementById("step1-ndat-params").textContent =
-          `${ndat}, coverage threshold ${th}%`;
-        document.getElementById("step1-ndat-col-valid-after").textContent =
-          `Valid days after ${ndat}`;
-        document.getElementById("step1-ndat-col-below").textContent =
-          `Days below ${th}% after Ndat`;
-
+      // Optional Step 1 Ndat-impact DIAGNOSTIC rows, keyed like the summary
+      // rows (runKey), so diagnostics of different criteria or settings stay
+      // side by side. Presentation only: every number comes from
+      // run_ndat_impact() in 1-completitud.py, with its two scopes kept
+      // apart (filter_on_valid_days / completeness_all_doys).
+      function upsertNdatImpactRow(tbodyId, p, impact) {
+        const row = findOrAddRow(
+          document.getElementById(tbodyId),
+          runKey(p, impact.ndat_mode),
+        );
         const f = impact.filter_on_valid_days;
         const c = impact.completeness_all_doys;
         const pct = (x) => `${Number(x).toFixed(2)}%`;
         row.innerHTML =
-          `<td>${station}</td>` +
+          `<td>${p.station}</td><td>${escapeHtml(impact.ndat_label)}</td>${runCells(p)}` +
           `<td>${pct(f.pct_obs_discarded)}</td>` +
           `<td>${pct(f.pct_station_minutes_lost)}</td>` +
           `<td>${c.n_valid_days_baseline}</td>` +
@@ -2141,93 +2569,75 @@
           `<td>${pct(c.overall_coverage_baseline_pct)} &rarr; ${pct(c.overall_coverage_after_ndat_pct)}</td>`;
       }
 
-      // A run without the checkbox drops that station's diagnostic row, so the
-      // table never shows figures from a different set of parameters.
-      function removeNdatImpactRow(tbodyId, station) {
-        const row = document
-          .getElementById(tbodyId)
-          .querySelector(`[data-station="${station}"]`);
-        if (row) row.remove();
-      }
-
-      // Threshold and band limits of the post-Ndat groups, as percentages,
-      // straight from run_ndat_impact()'s summary - no value fixed here.
-      function ndatGroupLimits(impact) {
-        const g = impact.post_ndat_coverage_of_valid_days;
-        const pct = (x) => Number((x * 100).toFixed(2)); // fraction -> percent
-        return { th: pct(g.threshold), lo: pct(g.lower_bound), band: pct(g.band) };
-      }
-
-      // Second diagnostic table: the Step 1 valid days of each station split
-      // by their post-Ndat coverage. Same row/parameter rules as
-      // upsertNdatImpactRow(); counts come from the server, already checked
-      // there to add up to the valid days.
-      function upsertNdatGroupsRow(tbodyId, station, impact) {
-        const tbody = document.getElementById(tbodyId);
-        const params = `${impact.ndat_mode}|${impact.th_cov}`;
-        tbody.querySelectorAll("tr").forEach((r) => {
-          if (r.dataset.params !== params) r.remove();
-        });
-        let row = tbody.querySelector(`[data-station="${station}"]`);
-        if (!row) {
-          row = document.createElement("tr");
-          row.dataset.station = station;
-          tbody.appendChild(row);
-        }
-        row.dataset.params = params;
-
-        const { th, lo } = ndatGroupLimits(impact);
-        document.getElementById("step1-ndat-groups-col-above").textContent = `≥ ${th}%`;
-        document.getElementById("step1-ndat-groups-col-band").textContent = `${lo}% to < ${th}%`;
-        document.getElementById("step1-ndat-groups-col-below").textContent = `< ${lo}%`;
-
+      // Second diagnostic table: the ALL_NDAT valid days split by their
+      // coverage after the criterion. Same keys as upsertNdatImpactRow();
+      // counts come from the server, already checked there to add up to the
+      // valid days.
+      function upsertNdatGroupsRow(tbodyId, p, impact) {
+        const row = findOrAddRow(
+          document.getElementById(tbodyId),
+          runKey(p, impact.ndat_mode),
+        );
         const g = impact.post_ndat_coverage_of_valid_days;
         row.innerHTML =
-          `<td>${station}</td><td>${g.n_valid_days}</td>` +
+          `<td>${p.station}</td><td>${escapeHtml(impact.ndat_label)}</td>${runCells(p)}` +
+          `<td>${g.n_valid_days}</td>` +
           `<td>${g.n_at_or_above_threshold}</td>` +
           `<td>${g.n_in_band_below_threshold}</td>` +
           `<td>${g.n_below_band}</td>`;
       }
 
-      // "How to read" note under the two Ndat tables - only while they hold
-      // a row (impact = the latest diagnostic response, or null to re-check).
+      // "How to read" note under the two Ndat tables. The band width comes
+      // from run_ndat_impact()'s summary - no value fixed here.
       function updateNdatExplanation(impact) {
-        const box = document.getElementById("step1-ndat-explanation");
-        if (!impact) {
-          if (!document.querySelector("#step1-ndat-summary-body tr")) box.innerHTML = "";
-          return;
-        }
-        const ndat = impact.ndat_label.replace(" = ", "=");
-        const { th, lo, band } = ndatGroupLimits(impact);
-        box.innerHTML =
+        const band = Number(
+          (impact.post_ndat_coverage_of_valid_days.band * 100).toFixed(2),
+        );
+        document.getElementById("step1-ndat-explanation").innerHTML =
           `<h4 style="margin-bottom:0.3rem">How to read the Ndat impact summary</h4>` +
           `<ul style="margin-top:0">` +
-          `<li><strong>Observations discarded [%]</strong>: share of observations removed by the Ndat filter within the official Step 1 valid days.</li>` +
-          `<li><strong>Temporal minutes lost [%]</strong>: share of temporal (station-)minutes that disappear after the Ndat filter, also within the official valid days.</li>` +
-          `<li><strong>Valid days</strong>: days classified as valid by Step 1 before applying Ndat.</li>` +
-          `<li><strong>Valid days after ${ndat}</strong>: hypothetical number of those days that would still reach the ${th}% threshold if completeness were recomputed after Ndat.</li>` +
-          `<li><strong>Days below ${th}% after Ndat</strong>: officially valid days that would fall below the threshold after the filter.</li>` +
+          `<li><strong>Observations discarded [%]</strong>: share of the observations of the ALL_NDAT valid days that the criterion removes.</li>` +
+          `<li><strong>Temporal minutes lost [%]</strong>: share of the temporal (station-)minutes of those days that disappear with the criterion.</li>` +
+          `<li><strong>Valid days</strong>: valid days of ALL_NDAT.</li>` +
+          `<li><strong>Valid days after Ndat</strong>: days that still reach the threshold (TH) with the criterion applied - the valid days of that criterion's own completeness.</li>` +
+          `<li><strong>Days below threshold after Ndat</strong>: ALL_NDAT valid days that fall below the threshold with the criterion.</li>` +
           `<li><strong>Annual temporal coverage before &rarr; after Ndat</strong>: temporal coverage over every DoY of the range, not only the valid days.</li>` +
-          `<li><strong>Post-Ndat coverage of initially valid days</strong>: the same valid days grouped by their coverage after Ndat - at or above ${th}%, within ${band} percentage points below it (${lo}% to &lt; ${th}%), and below ${lo}%.</li>` +
+          `<li><strong>Post-Ndat coverage of initially valid days</strong>: the ALL_NDAT valid days grouped by their coverage with the criterion - at or above the threshold, within ${band} percentage points below it, and below that band.</li>` +
           `</ul>` +
-          `<p class="intro" style="margin-top:0">The post-Ndat validity values are diagnostic only. They do not modify the official Step 1 valid/invalid classification and they do not change the days currently used by Steps 2-6.</p>`;
+          `<p class="intro" style="margin-top:0">The diagnostic shows how the criterion changes completeness relative to ALL_NDAT. ` +
+          `The criterion's own completeness (its row in the summary above) defines the valid days that Steps 2-6 use with that criterion.</p>`;
       }
 
-      // Same find-or-create-by-station pattern as upsertSummaryRow(), kept
-      // outside the graph cards on purpose - a screenshot of "just the
-      // graphs" grid should never include a download link, so all of them
-      // live here instead, one line per station, updated in place on re-run.
+      // Same find-or-create pattern as the summary rows, kept outside the
+      // graph cards on purpose - a screenshot of "just the graphs" grid
+      // should never include a download link, so all of them live here
+      // instead, one line per key (runKey; the year for Step 0), updated in
+      // place on re-run.
       // linksHtml is pre-built by the caller so this stays presentation-only
       // (no per-step knowledge of how many CSVs a step produces).
-      function upsertDownloadLine(containerId, station, label, linksHtml) {
+      function upsertDownloadLine(containerId, key, label, linksHtml) {
         const container = document.getElementById(containerId);
-        let line = container.querySelector(`[data-station="${station}"]`);
+        let line = container.querySelector(`[data-key="${key}"]`);
         if (!line) {
           line = document.createElement("div");
-          line.dataset.station = station;
+          line.dataset.key = key;
           container.appendChild(line);
         }
         line.innerHTML = `${label}: ${linksHtml}`;
+      }
+
+      // Card of a result grid for this exact key, created if missing - the
+      // same rule runStep() applies to the card of its own request.
+      function upsertCard(gridId, key, html) {
+        const grid = document.getElementById(gridId);
+        let card = grid.querySelector(`[data-key="${key}"]`);
+        if (!card) {
+          card = document.createElement("div");
+          card.dataset.key = key;
+          grid.appendChild(card);
+        }
+        card.className = "result-card";
+        card.innerHTML = html;
       }
 
       // Reusable for future steps: reuses the card for this exact cardKey if one
@@ -2262,6 +2672,7 @@
           if (!response.ok || !data.ok) {
             card.className = "result-card error";
             card.textContent = "Error: " + (data.error || response.statusText);
+            makeDismissible(card);
             setStepState(gridId, "error");
             return;
           }
@@ -2271,9 +2682,39 @@
         } catch (err) {
           card.className = "result-card error";
           card.textContent = "Request failed: " + err;
+          makeDismissible(card);
           setStepState(gridId, "error");
         }
       }
+
+      // Every red error or warning of the page gets a × that removes just
+      // that message: error cards (runStep), red status lines
+      // (setFieldStatus) and the warnings inside result cards. Page only -
+      // nothing is sent to the server, and no other message, card, form
+      // field or result is touched; the step's state badge and Clear keep
+      // their own behaviour. An error card is removed from its grid (running
+      // the same parameters again just creates a new card); a status line is
+      // a fixed placeholder, so it is emptied instead.
+      function dismissButtonHtml(label) {
+        return `<button type="button" class="dismiss-btn" aria-label="${label}" title="${label}">&times;</button>`;
+      }
+
+      function makeDismissible(element, label = "Dismiss error") {
+        element.classList.add("dismissible");
+        element.insertAdjacentHTML("beforeend", dismissButtonHtml(label));
+      }
+
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("button.dismiss-btn");
+        const message = button && button.closest(".dismissible");
+        if (!message) return;
+        if (message.classList.contains("field-status")) {
+          message.textContent = "";
+          message.className = "field-status";
+        } else {
+          message.remove();
+        }
+      });
 
       // Step 0 - the folder picker lives on the server on purpose: a browser
       // file input never exposes a real absolute path, so the only way to let
@@ -2333,6 +2774,41 @@
         }
       }
 
+      // Output folder: the path comes from the server (GET /api/paths), never
+      // from this page, and the open action sends no path at all - the server
+      // only ever opens its own results folder.
+      async function loadResultsRoot() {
+        const field = document.getElementById("results-root");
+        try {
+          const response = await fetch("/api/paths");
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || response.statusText);
+          field.value = data.results_root;
+        } catch (err) {
+          field.value = "";
+          setFieldStatus("results-root-status", "Could not read the results folder: " + (err.message || err), true);
+        }
+      }
+
+      async function openResultsFolder() {
+        const button = document.getElementById("open-results-folder");
+        button.disabled = true;
+        setFieldStatus("results-root-status", "", false);
+        try {
+          const response = await fetch("/api/open-results-folder", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok || !data.ok) {
+            setFieldStatus("results-root-status", data.error || response.statusText, true);
+            return;
+          }
+          setFieldStatus("results-root-status", "Opened in the file manager.", false);
+        } catch (err) {
+          setFieldStatus("results-root-status", "Request failed: " + err, true);
+        } finally {
+          button.disabled = false;
+        }
+      }
+
       // One row per station, rebuilt whole on every run: unlike Steps 1-6
       // there is no per-station run here, so there is nothing to upsert -
       // a run always returns the complete set of stations it just wrote.
@@ -2359,8 +2835,8 @@
 
       // Same runStep() as every other section - the long wait (a full year is
       // over a minute) shows as the section state going to "Running", exactly
-      // like a short step. No Ndat here: getNdatMode() is for Steps 2-6, this
-      // one converts and filters nothing.
+      // like a short step. No Ndat here: this step converts and filters
+      // nothing.
       function runStep0() {
         const payload = {
           raw_dir: document.getElementById("step0-raw-dir").value.trim(),
@@ -2400,8 +2876,37 @@
         });
       }
 
+      // Step 1 Ndat controls: operator, value and the diagnostic checkbox
+      // only apply to a custom criterion.
+      function step1NdatIsCustom() {
+        return (
+          document.querySelector('input[name="step1-ndat-kind"]:checked')
+            .value === "custom"
+        );
+      }
+
+      function syncStep1NdatControls() {
+        const custom = step1NdatIsCustom();
+        const impact = document.getElementById("step1-ndat-impact");
+        document.getElementById("step1-ndat-operator").disabled = !custom;
+        document.getElementById("step1-ndat-value").disabled = !custom;
+        impact.disabled = !custom;
+        if (!custom) impact.checked = false;
+        setFieldStatus("step1-ndat-status", "", false);
+      }
+      document
+        .querySelectorAll('input[name="step1-ndat-kind"]')
+        .forEach((radio) =>
+          radio.addEventListener("change", syncStep1NdatControls),
+        );
+      syncStep1NdatControls();
+
+      // The request carries the operator and value as chosen; the server
+      // builds and validates the criterion (ndat_filter.build_ndat_mode). The
+      // check here only saves a round trip for an obviously wrong value.
       function runStep1() {
         const payload = {
+          index: currentIndex(),
           station: document.getElementById("step1-station").value,
           year: parseInt(document.getElementById("step1-year").value, 10),
           doy_start: parseInt(
@@ -2410,52 +2915,70 @@
           ),
           doy_end: parseInt(document.getElementById("step1-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step1-th-cov").value),
+          ndat_operator: "all",
         };
-        // Optional diagnostic: only sent when the checkbox is on, so a plain
-        // run sends exactly the same request as before.
-        if (document.getElementById("step1-ndat-impact").checked) {
-          payload.ndat_impact = true;
-          payload.ndat_mode = getNdatMode();
-        }
-        const cardKey = [
-          payload.station,
-          payload.year,
-          payload.doy_start,
-          payload.doy_end,
-          payload.th_cov,
-          ...(payload.ndat_impact ? [`ndat:${payload.ndat_mode}`] : []),
-        ].join("|");
-        runStep("/api/run/step1", payload, "step1-grid", cardKey, (data) => {
-          const impact = data.ndat_impact;
-          upsertSummaryRow("step1-summary-body", payload.station, data);
-          updateStep1Explanation(data.th_cov);
-          if (impact) {
-            upsertNdatImpactRow("step1-ndat-summary-body", payload.station, impact);
-            upsertNdatGroupsRow("step1-ndat-groups-body", payload.station, impact);
-            updateNdatExplanation(impact);
-          } else {
-            removeNdatImpactRow("step1-ndat-summary-body", payload.station);
-            removeNdatImpactRow("step1-ndat-groups-body", payload.station);
-            updateNdatExplanation(null);
+        setFieldStatus("step1-ndat-status", "", false);
+        if (step1NdatIsCustom()) {
+          const field = document.getElementById("step1-ndat-value");
+          const raw = field.value.trim();
+          const value = Number(raw);
+          if (!/^\d+$/.test(raw) || value < Number(field.min) || value > Number(field.max)) {
+            setFieldStatus(
+              "step1-ndat-status",
+              `Ndat must be a whole number from ${field.min} to ${field.max}.`,
+              true,
+            );
+            return;
           }
-          upsertDownloadLine(
-            "step1-downloads",
-            payload.station,
-            `${data.station} (${data.year})`,
-            `<a href="${data.csv_url}" target="_blank">Download CSV</a>` +
-              (impact
-                ? ` <a href="${impact.csv_url}" target="_blank">Ndat impact CSV (diagnostic)</a>`
-                : ""),
-          );
-          return (
-            `<h3>${data.station} (${data.year})` +
-            (impact ? ` - Ndat impact: ${impact.ndat_label}` : "") +
-            `</h3>` +
-            `<img src="${data.plot_url}?t=${Date.now()}" alt="Coverage plot">` +
-            (impact
-              ? `<img src="${impact.plot_url}?t=${Date.now()}" alt="Ndat impact on daily coverage (diagnostic)">`
-              : "")
-          );
+          payload.ndat_operator = document.getElementById("step1-ndat-operator").value;
+          payload.ndat_value = value;
+          // Diagnostic ALL_NDAT vs this criterion, only when asked for.
+          if (document.getElementById("step1-ndat-impact").checked) {
+            payload.ndat_impact = true;
+          }
+        }
+
+        // One card per completeness, keyed by runKey. ALL_NDAT is part of every
+        // Step 1 run, so its card holds the request; a custom criterion gets
+        // its own card from the response.
+        const cardKey = (mode) => runKey(payload, mode);
+        runStep("/api/run/step1", payload, "step1-grid", cardKey("all"), (data) => {
+          const impact = data.ndat_impact;
+          let allCardHtml = "";
+          data.completeness.forEach((entry, i) => {
+            const withImpact = impact && impact.ndat_mode === entry.mode;
+            upsertSummaryRow("step1-summary-body", payload, entry);
+            upsertDownloadLine(
+              "step1-downloads",
+              runKey(payload, entry.mode),
+              runLabel(payload, entry.label),
+              `<a href="${entry.csv_url}" target="_blank">Download CSV</a>` +
+                (withImpact
+                  ? ` <a href="${impact.csv_url}" target="_blank">Ndat impact CSV (diagnostic)</a>`
+                  : ""),
+            );
+            const html =
+              `<h3>${runLabel(payload, entry.label)}` +
+              (withImpact ? " - with Ndat impact" : "") +
+              `</h3>` +
+              `<img src="${entry.plot_url}?t=${Date.now()}" alt="Coverage plot">` +
+              (withImpact
+                ? `<img src="${impact.plot_url}?t=${Date.now()}" alt="Ndat impact on daily coverage (diagnostic)">`
+                : "");
+            if (i === 0) allCardHtml = html;
+            else upsertCard("step1-grid", cardKey(entry.mode), html);
+          });
+          updateStep1Explanation(data.th_cov);
+          // Diagnostic rows are keyed by run, so a run without the
+          // diagnostic leaves the existing ones as they are.
+          if (impact) {
+            upsertNdatImpactRow("step1-ndat-summary-body", payload, impact);
+            upsertNdatGroupsRow("step1-ndat-groups-body", payload, impact);
+            updateNdatExplanation(impact);
+          }
+          // New completeness on disk: every Ndat selector may now list more.
+          refreshAllNdatSelects();
+          return allCardHtml;
         });
       }
 
@@ -2463,27 +2986,21 @@
       // here always come from months with enough valid days (see the note
       // above the table) - which month, if any, got excluded is not repeated
       // per cell, it is visible in that station's chart annotation instead.
-      function formatRange(data, col) {
-        const minV = data[col + "_min_value"].toFixed(2);
-        const maxV = data[col + "_max_value"].toFixed(2);
+      function formatRange(data, col, index) {
+        const minV = withUnit(data[col + "_min_value"].toFixed(2), index);
+        const maxV = withUnit(data[col + "_max_value"].toFixed(2), index);
         return (
           `${minV} (${data[col + "_min_month"]}, n_days=${data[col + "_min_n_days"]}) ` +
           `– ${maxV} (${data[col + "_max_month"]}, n_days=${data[col + "_max_n_days"]})`
         );
       }
 
-      function upsertCcdfSummaryRow(tbodyId, station, data) {
-        const tbody = document.getElementById(tbodyId);
-        let row = tbody.querySelector(`[data-station="${station}"]`);
-        if (!row) {
-          row = document.createElement("tr");
-          row.dataset.station = station;
-          tbody.appendChild(row);
-        }
+      function upsertCcdfSummaryRow(tbodyId, p, ndat, data) {
+        const row = findOrAddRow(document.getElementById(tbodyId), runKey(p, ndat.mode));
         row.innerHTML =
-          `<td>${data.station}</td><td>${data.year}</td>` +
-          `<td>${formatRange(data, "p90")}</td><td>${data.p90_range.toFixed(2)}</td>` +
-          `<td>${formatRange(data, "p99")}</td><td>${data.p99_range.toFixed(2)}</td>`;
+          `<td>${p.station}</td><td>${escapeHtml(ndat.label)}</td>${runCells(p)}` +
+          `<td>${formatRange(data, "p90", p.index)}</td><td>${withUnit(data.p90_range.toFixed(2), p.index)}</td>` +
+          `<td>${formatRange(data, "p99", p.index)}</td><td>${withUnit(data.p99_range.toFixed(2), p.index)}</td>`;
       }
 
       function updateStep2Explanation(minValidDays) {
@@ -2491,16 +3008,19 @@
           `<h4 style="margin-bottom:0.3rem">How to read the summary</h4>` +
           `<ul style="margin-top:0">` +
           `<li><strong>p90 summary</strong>: minimum and maximum monthly p90 values among months with sufficient statistical support, including the corresponding month and number of valid days.</li>` +
-          `<li><strong>p90 range [TECU/min]</strong>: difference between the reliable monthly p90 maximum and minimum.</li>` +
+          `<li><strong>p90 range</strong>: difference between the reliable monthly p90 maximum and minimum, in the unit of the index.</li>` +
           `<li><strong>p99 summary</strong>: equivalent minimum and maximum for monthly p99.</li>` +
-          `<li><strong>p99 range [TECU/min]</strong>: difference between the reliable monthly p99 maximum and minimum.</li>` +
+          `<li><strong>p99 range</strong>: difference between the reliable monthly p99 maximum and minimum, in the unit of the index.</li>` +
           `<li><strong>Statistical support</strong>: months with n_days &lt; ${minValidDays} remain in the CSV and plots but are excluded from the extrema/range summary.</li>` +
-          `<li><strong>n_days</strong>: number of valid DoYs contributing ROTI L1 observations to that month.</li>` +
+          `<li><strong>n_days</strong>: number of valid DoYs contributing observations of the index to that month.</li>` +
           `</ul>`;
       }
 
       function runStep2() {
+        const ndat = ndatChoice("step2-ndat");
+        if (!ndat) return;
         const payload = {
+          index: currentIndex(),
           station: document.getElementById("step2-station").value,
           year: parseInt(document.getElementById("step2-year").value, 10),
           doy_start: parseInt(
@@ -2509,26 +3029,28 @@
           ),
           doy_end: parseInt(document.getElementById("step2-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step2-th-cov").value),
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           payload.station,
           payload.year,
           payload.doy_start,
           payload.doy_end,
           payload.th_cov,
+          ndat.mode,
         ].join("|");
         runStep("/api/run/step2", payload, "step2-grid", cardKey, (data) => {
-          upsertCcdfSummaryRow("step2-summary-body", payload.station, data);
+          upsertCcdfSummaryRow("step2-summary-body", payload, ndat, data);
           updateStep2Explanation(data.min_valid_days_per_month);
           upsertDownloadLine(
             "step2-downloads",
-            payload.station,
-            `${data.station} (${data.year})`,
+            runKey(payload, ndat.mode),
+            runLabel(payload, ndat.label),
             `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
           );
           return (
-            `<h3>${data.station} (${data.year})</h3>` +
+            `<h3>${runLabel(payload, ndat.label)}</h3>` +
             `<img src="${data.plot_url}?t=${Date.now()}" alt="Monthly percentile variability">`
           );
         });
@@ -2583,7 +3105,10 @@
       }
 
       function runStep2_2() {
+        const ndat = ndatChoice("step2-cmp-ndat");
+        if (!ndat) return;
         const payload = {
+          index: currentIndex(),
           year: parseInt(document.getElementById("step2-year").value, 10),
           doy_start: parseInt(
             document.getElementById("step2-doy-start").value,
@@ -2591,26 +3116,28 @@
           ),
           doy_end: parseInt(document.getElementById("step2-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step2-th-cov").value),
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           payload.year,
           payload.doy_start,
           payload.doy_end,
           payload.th_cov,
+          ndat.mode,
         ].join("|");
         runStep("/api/run/step2.2", payload, "step22-grid", cardKey, (data) => {
           let notes = "";
           const missing = Object.keys(data.missing_stations);
           if (missing.length) {
-            notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+            notes += `<p class="inline-warning dismissible">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}${dismissButtonHtml("Dismiss warning")}</p>`;
           }
           const thWarn = Object.keys(data.th_cov_warnings);
           if (thWarn.length) {
-            notes += `<p style="color:#900">th_cov warning: ${thWarn.join(", ")}</p>`;
+            notes += `<p class="inline-warning dismissible">th_cov warning: ${thWarn.join(", ")}${dismissButtonHtml("Dismiss warning")}</p>`;
           }
           return (
-            `<h3>Cross-station comparison (${data.year})</h3>` +
+            `<h3>Cross-station comparison (${runSettings(payload)}) - ${escapeHtml(ndat.label)}</h3>` +
             `<p>Stations included: ${data.available_stations.join(", ")}. ` +
             `<code>*</code> marks months with fewer than ${data.min_valid_days_per_month} valid days.</p>` +
             notes +
@@ -2631,6 +3158,7 @@
         const el = document.getElementById(elementId);
         el.textContent = message || "";
         el.className = "field-status" + (isError ? " error" : "");
+        if (isError && message) makeDismissible(el);
       }
 
       document
@@ -2643,6 +3171,8 @@
       // month - errors go in the status line next to the button, never as a
       // permanent card in the results grid.
       function runStep2CcdfCompare() {
+        const ndat = ndatChoice("step2-ccdf-ndat");
+        if (!ndat) return;
         const station = document.getElementById("step2-ccdf-station").value;
         const year = parseInt(document.getElementById("step2-year").value, 10);
         const doy_start = parseInt(
@@ -2671,21 +3201,24 @@
         setFieldStatus("step2-ccdf-compare-status", "", false);
 
         const payload = {
+          index: currentIndex(),
           station,
           year,
           doy_start,
           doy_end,
           th_cov,
           months,
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           station,
           year,
           doy_start,
           doy_end,
           th_cov,
           months.join(","),
+          ndat.mode,
         ].join("|");
         runStep(
           "/api/run/step2/ccdf-compare",
@@ -2701,10 +3234,10 @@
               const lowLabel = data.low_support_months
                 .map((m) => MONTH_ABBR[m])
                 .join(", ");
-              notes = `<p style="color:#900">Low support (n_days &lt; ${data.min_valid_days_per_month}): ${lowLabel}</p>`;
+              notes = `<p class="inline-warning dismissible">Low support (n_days &lt; ${data.min_valid_days_per_month}): ${lowLabel}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             return (
-              `<h3>${data.station} (${data.year}) - ${monthsLabel}</h3>` +
+              `<h3>${data.station} (${runSettings(payload)}) - ${monthsLabel} - ${escapeHtml(ndat.label)}</h3>` +
               notes +
               `<img src="${data.plot_url}?t=${Date.now()}" alt="Monthly CCDF comparison">`
             );
@@ -2716,6 +3249,8 @@
       // one-month constraint is guaranteed by construction - no JS enforcement
       // needed) - color fixed per station.
       function runStep2CrossStationCcdf() {
+        const ndat = ndatChoice("step2-cmp-ndat");
+        if (!ndat) return;
         const year = parseInt(document.getElementById("step2-year").value, 10);
         const doy_start = parseInt(
           document.getElementById("step2-doy-start").value,
@@ -2749,21 +3284,24 @@
         setFieldStatus("step2-cross-station-status", "", false);
 
         const payload = {
+          index: currentIndex(),
           stations,
           months: [month],
           year,
           doy_start,
           doy_end,
           th_cov,
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           stations.join(","),
           year,
           doy_start,
           doy_end,
           th_cov,
           month,
+          ndat.mode,
         ].join("|");
         runStep(
           "/api/run/step2/cross-station-ccdf",
@@ -2774,7 +3312,7 @@
             let notes = "";
             const missing = Object.keys(data.missing_stations);
             if (missing.length) {
-              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+              notes += `<p class="inline-warning dismissible">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             // Low support is per station here, not per month - the same month can
             // be fine for one station and low-support for another, so this must
@@ -2791,13 +3329,13 @@
                     `${st}: ${months.map((m) => MONTH_ABBR[m]).join(", ")}`,
                 )
                 .join("; ");
-              notes += `<p style="color:#900">Low support (n_days &lt; ${data.min_valid_days_per_month}): ${lowLabel}</p>`;
+              notes += `<p class="inline-warning dismissible">Low support (n_days &lt; ${data.min_valid_days_per_month}): ${lowLabel}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             const monthsLabel = data.months
               .map((m) => MONTH_ABBR[m])
               .join(", ");
             return (
-              `<h3>${data.stations_used.join(", ")} (${data.year}) - ${monthsLabel}</h3>` +
+              `<h3>${data.stations_used.join(", ")} (${runSettings(payload)}) - ${monthsLabel} - ${escapeHtml(ndat.label)}</h3>` +
               notes +
               `<img src="${data.plot_url}?t=${Date.now()}" alt="Cross-station CCDF comparison">`
             );
@@ -2832,6 +3370,20 @@
           }
         });
 
+      // A new criterion, or a refresh of its selector after the year/DoY/
+      // threshold changed (NDAT_SELECTS onRefresh), reloads the grid if it is
+      // open, or on its next opening.
+      function reloadStep2CcdfGrid() {
+        if (document.getElementById("step2-ccdf-grid-details").open) {
+          loadStep2CcdfGrid();
+        } else {
+          step2CcdfGridLoaded = false;
+        }
+      }
+      document
+        .getElementById("step2-grid-ndat")
+        .addEventListener("change", reloadStep2CcdfGrid);
+
       async function loadStep2CcdfGrid() {
         const container = document.getElementById("step2-ccdf-grid-container");
         const year = parseInt(document.getElementById("step2-year").value, 10);
@@ -2846,6 +3398,12 @@
         const th_cov = parseFloat(
           document.getElementById("step2-th-cov").value,
         );
+        const ndat = ndatChoice("step2-grid-ndat");
+        if (!ndat) {
+          container.textContent =
+            "No Ndat criterion has a Step 1 completeness at these settings - run Step 1 first.";
+          return;
+        }
 
         container.textContent = "Loading...";
         try {
@@ -2853,11 +3411,12 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              index: currentIndex(),
               year,
               doy_start,
               doy_end,
               th_cov,
-              ndat_mode: getNdatMode(),
+              ndat_mode: ndat.mode,
             }),
           });
           const data = await response.json();
@@ -2910,21 +3469,18 @@
             .forEach((cell) => (cell.style.display = visible));
         });
 
-      function upsertStep3SummaryRow(tbodyId, station, data) {
-        const tbody = document.getElementById(tbodyId);
-        let row = tbody.querySelector(`[data-station="${station}"]`);
-        if (!row) {
-          row = document.createElement("tr");
-          row.dataset.station = station;
-          tbody.appendChild(row);
-        }
+      function upsertStep3SummaryRow(tbodyId, p, ndat, data) {
+        const row = findOrAddRow(document.getElementById(tbodyId), runKey(p, ndat.mode));
         row.innerHTML =
-          `<td>${data.station}</td><td>${data.year}</td><td>${data.n_values.toLocaleString()}</td>` +
-          `<td>${data.p90_annual.toFixed(2)}</td><td>${data.p99_annual.toFixed(2)}</td>`;
+          `<td>${p.station}</td><td>${escapeHtml(ndat.label)}</td>${runCells(p)}<td>${data.n_values.toLocaleString()}</td>` +
+          `<td>${withUnit(data.p90_annual.toFixed(2), p.index)}</td><td>${withUnit(data.p99_annual.toFixed(2), p.index)}</td>`;
       }
 
       function runStep3() {
+        const ndat = ndatChoice("step3-ndat");
+        if (!ndat) return;
         const payload = {
+          index: currentIndex(),
           station: document.getElementById("step3-station").value,
           year: parseInt(document.getElementById("step3-year").value, 10),
           doy_start: parseInt(
@@ -2933,35 +3489,37 @@
           ),
           doy_end: parseInt(document.getElementById("step3-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step3-th-cov").value),
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           payload.station,
           payload.year,
           payload.doy_start,
           payload.doy_end,
           payload.th_cov,
+          ndat.mode,
         ].join("|");
         runStep("/api/run/step3", payload, "step3-grid", cardKey, (data) => {
-          upsertStep3SummaryRow("step3-summary-body", data.station, data);
+          upsertStep3SummaryRow("step3-summary-body", payload, ndat, data);
           upsertDownloadLine(
             "step3-downloads",
-            data.station,
-            `${data.station} (${data.year})`,
+            runKey(payload, ndat.mode),
+            runLabel(payload, ndat.label),
             `<a href="${data.thresholds_csv_url}" target="_blank">Download thresholds CSV</a>` +
               `<a href="${data.daily_csv_url}" target="_blank">Download daily CSV</a>`,
           );
           return (
-            `<h3>${data.station} (${data.year})</h3>` +
+            `<h3>${runLabel(payload, ndat.label)}</h3>` +
             `<img src="${data.plot_url}?t=${Date.now()}" alt="Daily frequency of threshold exceedance">`
           );
         });
       }
 
-      function buildStep3SummaryTable(table) {
+      function buildStep3SummaryTable(table, index) {
         const header =
           "<tr><th>Station</th><th>n_values</th>" +
-          "<th>p90 annual [TECU/min]</th><th>p99 annual [TECU/min]</th>" +
+          `<th>p90 annual${unitSuffix(index)}</th><th>p99 annual${unitSuffix(index)}</th>` +
           "<th>Max p90 freq day</th><th>Max p90 freq [%]</th><th>Max p90 day support</th>" +
           "<th>Max p99 freq day</th><th>Max p99 freq [%]</th><th>Max p99 day support</th></tr>";
         const support = (n_values, coverage) =>
@@ -3020,6 +3578,8 @@
       }
 
       function runStep3Comparison() {
+        const ndat = ndatChoice("step3-cmp-ndat");
+        if (!ndat) return;
         const year = parseInt(document.getElementById("step3-year").value, 10);
         const doy_start = parseInt(
           document.getElementById("step3-doy-start").value,
@@ -3033,15 +3593,18 @@
           document.getElementById("step3-top-n").value,
           10,
         );
+        const th_cov = parseFloat(document.getElementById("step3-th-cov").value);
 
         const payload = {
+          index: currentIndex(),
           year,
           doy_start,
           doy_end,
+          th_cov,
           top_n,
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
-        const cardKey = [year, doy_start, doy_end, top_n].join("|");
+        const cardKey = [payload.index, year, doy_start, doy_end, th_cov, top_n, ndat.mode].join("|");
         runStep(
           "/api/run/step3/comparison",
           payload,
@@ -3051,13 +3614,13 @@
             let notes = "";
             const missing = Object.keys(data.missing_stations);
             if (missing.length) {
-              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+              notes += `<p class="inline-warning dismissible">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             return (
-              `<h3>Cross-station daily comparison (${data.year})</h3>` +
+              `<h3>Cross-station daily comparison (${runSettings(payload)}, top ${data.top_n}) - ${escapeHtml(ndat.label)}</h3>` +
               `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
               notes +
-              buildStep3SummaryTable(data.table) +
+              buildStep3SummaryTable(data.table, payload.index) +
               `<h4 style="margin-bottom:0.3rem">Coincidences (date in top-${data.top_n} of 2+ stations)</h4>` +
               `<p class="intro" style="margin:0 0 0.5rem;font-size:0.8rem">Coincidences are based only on ` +
               `the Top-${data.top_n} daily p99 exceedance frequency ranking - independent of the ` +
@@ -3078,17 +3641,11 @@
         );
       }
 
-      function upsertStep4SummaryRow(tbodyId, station, data) {
-        const tbody = document.getElementById(tbodyId);
-        let row = tbody.querySelector(`[data-station="${station}"]`);
-        if (!row) {
-          row = document.createElement("tr");
-          row.dataset.station = station;
-          tbody.appendChild(row);
-        }
+      function upsertStep4SummaryRow(tbodyId, p, ndat, data) {
+        const row = findOrAddRow(document.getElementById(tbodyId), runKey(p, ndat.mode));
         const support = (n) => n.toLocaleString();
         row.innerHTML =
-          `<td>${data.station}</td><td>${data.year}</td>` +
+          `<td>${p.station}</td><td>${escapeHtml(ndat.label)}</td>${runCells(p)}` +
           `<td>${data.max_p90_hours.join(", ")}</td><td>${data.max_p90_freq_pct.toFixed(2)}</td>` +
           `<td>${support(data.max_p90_n_values)}</td>` +
           `<td>${data.max_p99_hours.join(", ")}</td><td>${data.max_p99_freq_pct.toFixed(2)}</td>` +
@@ -3096,7 +3653,10 @@
       }
 
       function runStep4() {
+        const ndat = ndatChoice("step4-ndat");
+        if (!ndat) return;
         const payload = {
+          index: currentIndex(),
           station: document.getElementById("step4-station").value,
           year: parseInt(document.getElementById("step4-year").value, 10),
           doy_start: parseInt(
@@ -3105,25 +3665,27 @@
           ),
           doy_end: parseInt(document.getElementById("step4-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step4-th-cov").value),
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           payload.station,
           payload.year,
           payload.doy_start,
           payload.doy_end,
           payload.th_cov,
+          ndat.mode,
         ].join("|");
         runStep("/api/run/step4", payload, "step4-grid", cardKey, (data) => {
-          upsertStep4SummaryRow("step4-summary-body", data.station, data);
+          upsertStep4SummaryRow("step4-summary-body", payload, ndat, data);
           upsertDownloadLine(
             "step4-downloads",
-            data.station,
-            `${data.station} (${data.year})`,
+            runKey(payload, ndat.mode),
+            runLabel(payload, ndat.label),
             `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
           );
           return (
-            `<h3>${data.station} (${data.year})</h3>` +
+            `<h3>${runLabel(payload, ndat.label)}</h3>` +
             `<img src="${data.plot_url}?t=${Date.now()}" alt="Hourly frequency of threshold exceedance">`
           );
         });
@@ -3152,6 +3714,8 @@
       // request params - no separate form fields, same convention as Step 3's
       // comparison subsection (reuses the Step 3 Year/DoY fields above it).
       function runStep4Comparison() {
+        const ndat = ndatChoice("step4-cmp-ndat");
+        if (!ndat) return;
         const year = parseInt(document.getElementById("step4-year").value, 10);
         const doy_start = parseInt(
           document.getElementById("step4-doy-start").value,
@@ -3162,8 +3726,9 @@
           10,
         );
 
-        const payload = { year, doy_start, doy_end, ndat_mode: getNdatMode() };
-        const cardKey = [year, doy_start, doy_end].join("|");
+        const th_cov = parseFloat(document.getElementById("step4-th-cov").value);
+        const payload = { index: currentIndex(), year, doy_start, doy_end, th_cov, ndat_mode: ndat.mode };
+        const cardKey = [payload.index, year, doy_start, doy_end, th_cov, ndat.mode].join("|");
         runStep(
           "/api/run/step4/comparison",
           payload,
@@ -3173,10 +3738,10 @@
             let notes = "";
             const missing = Object.keys(data.missing_stations);
             if (missing.length) {
-              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+              notes += `<p class="inline-warning dismissible">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             return (
-              `<h3>Cross-station hourly comparison (${data.year})</h3>` +
+              `<h3>Cross-station hourly comparison (${runSettings(payload)}) - ${escapeHtml(ndat.label)}</h3>` +
               `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
               notes +
               buildStep4ComparisonTable(data.table) +
@@ -3190,16 +3755,10 @@
         );
       }
 
-      function upsertStep5SummaryRow(tbodyId, station, data) {
-        const tbody = document.getElementById(tbodyId);
-        let row = tbody.querySelector(`[data-station="${station}"]`);
-        if (!row) {
-          row = document.createElement("tr");
-          row.dataset.station = station;
-          tbody.appendChild(row);
-        }
+      function upsertStep5SummaryRow(tbodyId, p, ndat, data) {
+        const row = findOrAddRow(document.getElementById(tbodyId), runKey(p, ndat.mode));
         row.innerHTML =
-          `<td>${data.station}</td><td>${data.year}</td>` +
+          `<td>${p.station}</td><td>${escapeHtml(ndat.label)}</td>${runCells(p)}` +
           `<td>${data.max_p90_dayparts.join(", ")}</td><td>${data.max_p90_freq_pct.toFixed(2)}</td>` +
           `<td>${data.max_p90_n_values.toLocaleString()}</td>` +
           `<td>${data.max_p99_dayparts.join(", ")}</td><td>${data.max_p99_freq_pct.toFixed(2)}</td>` +
@@ -3207,7 +3766,10 @@
       }
 
       function runStep5() {
+        const ndat = ndatChoice("step5-ndat");
+        if (!ndat) return;
         const payload = {
+          index: currentIndex(),
           station: document.getElementById("step5-station").value,
           year: parseInt(document.getElementById("step5-year").value, 10),
           doy_start: parseInt(
@@ -3216,25 +3778,27 @@
           ),
           doy_end: parseInt(document.getElementById("step5-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step5-th-cov").value),
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           payload.station,
           payload.year,
           payload.doy_start,
           payload.doy_end,
           payload.th_cov,
+          ndat.mode,
         ].join("|");
         runStep("/api/run/step5", payload, "step5-grid", cardKey, (data) => {
-          upsertStep5SummaryRow("step5-summary-body", data.station, data);
+          upsertStep5SummaryRow("step5-summary-body", payload, ndat, data);
           upsertDownloadLine(
             "step5-downloads",
-            data.station,
-            `${data.station} (${data.year})`,
+            runKey(payload, ndat.mode),
+            runLabel(payload, ndat.label),
             `<a href="${data.csv_url}" target="_blank">Download CSV</a>`,
           );
           return (
-            `<h3>${data.station} (${data.year})</h3>` +
+            `<h3>${runLabel(payload, ndat.label)}</h3>` +
             `<img src="${data.plot_url}?t=${Date.now()}" alt="Daypart frequency of threshold exceedance">`
           );
         });
@@ -3274,6 +3838,8 @@
       }
 
       function runStep5Comparison() {
+        const ndat = ndatChoice("step5-cmp-ndat");
+        if (!ndat) return;
         const year = parseInt(document.getElementById("step5-year").value, 10);
         const doy_start = parseInt(
           document.getElementById("step5-doy-start").value,
@@ -3288,13 +3854,14 @@
         );
 
         const payload = {
+          index: currentIndex(),
           year,
           doy_start,
           doy_end,
           th_cov,
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
-        const cardKey = [year, doy_start, doy_end, th_cov].join("|");
+        const cardKey = [payload.index, year, doy_start, doy_end, th_cov, ndat.mode].join("|");
         runStep(
           "/api/run/step5/comparison",
           payload,
@@ -3304,14 +3871,14 @@
             let notes = "";
             const missing = Object.keys(data.missing_stations);
             if (missing.length) {
-              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+              notes += `<p class="inline-warning dismissible">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             const thWarn = Object.keys(data.th_cov_warnings);
             if (thWarn.length) {
-              notes += `<p style="color:#900">th_cov warning: ${thWarn.map((s) => `${s} (${data.th_cov_warnings[s]})`).join("; ")}</p>`;
+              notes += `<p class="inline-warning dismissible">th_cov warning: ${thWarn.map((s) => `${s} (${data.th_cov_warnings[s]})`).join("; ")}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             return (
-              `<h3>Cross-station daypart comparison (${data.year})</h3>` +
+              `<h3>Cross-station daypart comparison (${runSettings(payload)}) - ${escapeHtml(ndat.label)}</h3>` +
               `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
               notes +
               buildStep5ComparisonTable(data) +
@@ -3344,7 +3911,10 @@
       }
 
       function runStep6() {
+        const ndat = ndatChoice("step6-ndat");
+        if (!ndat) return;
         const payload = {
+          index: currentIndex(),
           station: document.getElementById("step6-station").value,
           year: parseInt(document.getElementById("step6-year").value, 10),
           doy_start: parseInt(
@@ -3353,26 +3923,28 @@
           ),
           doy_end: parseInt(document.getElementById("step6-doy-end").value, 10),
           th_cov: parseFloat(document.getElementById("step6-th-cov").value),
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
         const cardKey = [
+          payload.index,
           payload.station,
           payload.year,
           payload.doy_start,
           payload.doy_end,
           payload.th_cov,
+          ndat.mode,
         ].join("|");
         runStep("/api/run/step6", payload, "step6-grid", cardKey, (data) => {
           upsertDownloadLine(
             "step6-downloads",
-            data.station,
-            `${data.station} (${data.year})`,
+            runKey(payload, ndat.mode),
+            runLabel(payload, ndat.label),
             `<a href="${data.csv_url}" target="_blank">Download month-hour CSV (12x24)</a>` +
               `<a href="${data.top_p90_csv_url}" target="_blank">Download Top-10 p90 CSV</a>` +
               `<a href="${data.top_p99_csv_url}" target="_blank">Download Top-10 p99 CSV</a>`,
           );
           return (
-            `<h3>${data.station} (${data.year})</h3>` +
+            `<h3>${runLabel(payload, ndat.label)}</h3>` +
             `<img src="${data.plot_p90_url}?t=${Date.now()}" alt="Month-hour p90 heatmap">` +
             `<img src="${data.plot_p99_url}?t=${Date.now()}" alt="Month-hour p99 heatmap">` +
             `<img src="${data.plot_nvalues_url}?t=${Date.now()}" alt="Month-hour observation support heatmap">` +
@@ -3417,6 +3989,8 @@
       // fields above - no separate form fields, same convention as Step 5's
       // comparison subsection (reuses the Step 5 Year/DoY fields above it).
       function runStep6CrossStationMaxima() {
+        const ndat = ndatChoice("step6-cmp-ndat");
+        if (!ndat) return;
         const year = parseInt(document.getElementById("step6-year").value, 10);
         const doy_start = parseInt(
           document.getElementById("step6-doy-start").value,
@@ -3431,13 +4005,14 @@
         );
 
         const payload = {
+          index: currentIndex(),
           year,
           doy_start,
           doy_end,
           th_cov,
-          ndat_mode: getNdatMode(),
+          ndat_mode: ndat.mode,
         };
-        const cardKey = [year, doy_start, doy_end, th_cov].join("|");
+        const cardKey = [payload.index, year, doy_start, doy_end, th_cov, ndat.mode].join("|");
         runStep(
           "/api/run/step6/cross-station-maxima",
           payload,
@@ -3447,10 +4022,10 @@
             let notes = "";
             const missing = Object.keys(data.missing_stations);
             if (missing.length) {
-              notes += `<p style="color:#900">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}</p>`;
+              notes += `<p class="inline-warning dismissible">Missing: ${missing.map((s) => `${s} (${data.missing_stations[s]})`).join("; ")}${dismissButtonHtml("Dismiss warning")}</p>`;
             }
             return (
-              `<h3>Cross-station month-hour maxima (${data.year})</h3>` +
+              `<h3>Cross-station month-hour maxima (${runSettings(payload)}) - ${escapeHtml(ndat.label)}</h3>` +
               `<p>Stations included: ${data.available_stations.join(", ")}.</p>` +
               notes +
               buildStep6MaximaTable(data)
@@ -3458,6 +4033,131 @@
           },
         );
       }
+      // Ndat criterion selectors of Steps 2-6. Each lists only the criteria
+      // whose Step 1 completeness exists for the fields of its own block
+      // (POST /api/ndat-modes): with a station field, that station's
+      // criteria; without one (comparisons, CCDF grid), the union over
+      // stations.json, with how many stations have each. Modes, labels and
+      // counts all come from the server - no criterion is written here.
+      //   form    - prefix of the block's year/DoY/threshold fields
+      //   station - its station field, if any
+      //   also    - other fields whose change must refresh it (the Step 2
+      //             station fields are kept in sync by syncSelects())
+      //   buttons - disabled while the list is empty
+      //   onRefresh - called after each applied refresh (the CCDF grid shows
+      //             saved plots, so it reloads with its new settings)
+      const NDAT_SELECTS = {
+        "step2-ndat": { form: "step2", station: "step2-station", also: ["step2-ccdf-station"], buttons: ["step2-run"] },
+        "step2-ccdf-ndat": { form: "step2", station: "step2-ccdf-station", also: ["step2-station"], buttons: ["step2-ccdf-run"] },
+        "step2-grid-ndat": { form: "step2", buttons: [], onRefresh: reloadStep2CcdfGrid },
+        "step2-cmp-ndat": { form: "step2", buttons: ["step22-run", "step2-cross-station-run"] },
+        "step3-ndat": { form: "step3", station: "step3-station", buttons: ["step3-run"] },
+        "step3-cmp-ndat": { form: "step3", buttons: ["step3-cmp-run"] },
+        "step4-ndat": { form: "step4", station: "step4-station", buttons: ["step4-run"] },
+        "step4-cmp-ndat": { form: "step4", buttons: ["step4-cmp-run"] },
+        "step5-ndat": { form: "step5", station: "step5-station", buttons: ["step5-run"] },
+        "step5-cmp-ndat": { form: "step5", buttons: ["step5-cmp-run"] },
+        "step6-ndat": { form: "step6", station: "step6-station", buttons: ["step6-run"] },
+        "step6-cmp-ndat": { form: "step6", buttons: ["step6-cmp-run"] },
+      };
+
+      // Latest request per selector: an answer is applied only if no newer
+      // request was sent since, so a slow reply for the previous
+      // station/threshold never fills the list of the current one.
+      const ndatRequests = {};
+
+      function ndatOptionText(m) {
+        const count =
+          m.n_valid_days !== undefined
+            ? `${m.n_valid_days} valid day${m.n_valid_days === 1 ? "" : "s"}`
+            : `${m.n_stations}/${m.total_stations} stations`;
+        return `${m.label} — ${count}`;
+      }
+
+      // Keeps the chosen criterion if it is still listed, otherwise ALL_NDAT
+      // ("all"), otherwise the first one. Nothing listed: "Run Step 1 first"
+      // and the block's buttons disabled until a refresh lists something.
+      async function refreshNdatSelect(selectId) {
+        const cfg = NDAT_SELECTS[selectId];
+        const select = document.getElementById(selectId);
+        const field = (suffix) => document.getElementById(`${cfg.form}-${suffix}`).value;
+        const body = {
+          index: currentIndex(),
+          year: parseInt(field("year"), 10),
+          doy_start: parseInt(field("doy-start"), 10),
+          doy_end: parseInt(field("doy-end"), 10),
+          th_cov: parseFloat(field("th-cov")),
+        };
+        if (cfg.station) body.station = document.getElementById(cfg.station).value;
+        const request = (ndatRequests[selectId] || 0) + 1;
+        ndatRequests[selectId] = request;
+
+        let modes = [];
+        let error = "";
+        try {
+          const response = await fetch("/api/ndat-modes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || response.statusText);
+          modes = data.modes;
+        } catch (err) {
+          error = err.message || String(err);
+        }
+        if (ndatRequests[selectId] !== request) return;
+
+        const previous = select.value;
+        if (modes.length) {
+          select.innerHTML = modes
+            .map(
+              (m) =>
+                `<option value="${escapeHtml(m.mode)}" data-label="${escapeHtml(m.label)}">` +
+                `${escapeHtml(ndatOptionText(m))}</option>`,
+            )
+            .join("");
+          const values = modes.map((m) => m.mode);
+          select.value = values.includes(previous)
+            ? previous
+            : values.includes("all")
+              ? "all"
+              : values[0];
+        } else {
+          select.innerHTML = `<option value="">${escapeHtml(error ? "Unavailable: " + error : "Run Step 1 first")}</option>`;
+        }
+        select.title = error;
+        select.disabled = !modes.length;
+        cfg.buttons.forEach((id) => {
+          document.getElementById(id).disabled = !modes.length;
+        });
+        if (cfg.onRefresh) cfg.onRefresh();
+      }
+
+      function refreshAllNdatSelects() {
+        Object.keys(NDAT_SELECTS).forEach(refreshNdatSelect);
+      }
+
+      // Any change of a field a selector depends on refreshes it. Registered
+      // after syncSelects(), so a synced Step 2 station is already updated.
+      Object.entries(NDAT_SELECTS).forEach(([selectId, cfg]) => {
+        [
+          cfg.station,
+          ...(cfg.also || []),
+          `${cfg.form}-year`,
+          `${cfg.form}-doy-start`,
+          `${cfg.form}-doy-end`,
+          `${cfg.form}-th-cov`,
+        ]
+          .filter(Boolean)
+          .forEach((id) => {
+            const el = document.getElementById(id);
+            el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () =>
+              refreshNdatSelect(selectId),
+            );
+          });
+      });
+
       // Stations shown and used by the web come from app/stations.json, served
       // by web_server.py at /api/stations - no station list is written here.
       let STATIONS = [];
@@ -3502,8 +4202,55 @@
         document.getElementById("step2-cross-station-stations").innerHTML = STATIONS.map(
           (st) => `<label><input type="checkbox" checked value="${st}" /> ${st}</label>`,
         ).join("");
+        refreshAllNdatSelects();
       }
-      loadStations();
+      // The Index selector: filled from /api/indices (index_config.py) before
+      // the stations, so the first Ndat-selector requests already carry the
+      // index. Changing it relabels the page and refreshes every Ndat
+      // selector (each index has its own Step 1 completeness); cards, rows
+      // and downloads already shown stay, each labelled with its own index.
+      function applyIndexLabels() {
+        const label = indexLabel(currentIndex());
+        document.querySelectorAll(".index-name").forEach((el) => {
+          el.textContent = label;
+        });
+        document.getElementById("topbar-index-label").textContent = label;
+      }
+
+      async function loadIndices() {
+        const select = document.getElementById("analysis-index-select");
+        try {
+          const response = await fetch("/api/indices");
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || response.statusText);
+          INDEX_INFO = Object.fromEntries(data.indices.map((i) => [i.index, i]));
+          const previous = select.value;
+          select.innerHTML = data.indices
+            .map(
+              (i) =>
+                `<option value="${escapeHtml(i.index)}"${i.supported ? "" : " disabled"}>` +
+                `${escapeHtml(i.label)}${i.supported ? "" : " (not enabled)"}</option>`,
+            )
+            .join("");
+          select.value =
+            INDEX_INFO[previous] && INDEX_INFO[previous].supported ? previous : data.default;
+        } catch (err) {
+          setFieldStatus(
+            "analysis-index-status",
+            "Could not load the index list: " + (err.message || err),
+            true,
+          );
+        }
+        applyIndexLabels();
+      }
+
+      document.getElementById("analysis-index-select").addEventListener("change", () => {
+        applyIndexLabels();
+        refreshAllNdatSelects();
+      });
+
+      loadIndices().then(loadStations);
+      loadResultsRoot();
     </script>
   </body>
 </html>

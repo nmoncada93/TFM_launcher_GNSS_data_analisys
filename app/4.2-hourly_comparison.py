@@ -14,8 +14,15 @@ for each station and builds:
     full 24-hour frequency curve on the same axis.
 
 Nothing is recomputed; only what 4-hourly_variability.py has saved per
-station is read. As in 2.2/3.2, a station without Step 4 output is
-skipped, not fatal.
+station is read.
+
+One comparison uses a single Ndat criterion (ndat_mode), DoY range and
+coverage threshold (th_cov) for every station: only the Step 4 outputs with
+that criterion and run tag (completeness_paths.run_tag) are read, and the
+comparison is written to its own <dir_tag> folder with the same run tag. As
+in 2.2/3.2, a station without that exact Step 4 output is skipped and
+reported, never replaced by the output of another criterion, DoY range or
+threshold.
 
 IMPORTANT scientific caveat: "local hour" is UTC plus each station's own
 fixed offset (not magnetic local time), so it is not a simultaneous
@@ -31,8 +38,8 @@ continuous nocturnal structure, not two separate peaks.
 The output is descriptive: the cross-station hourly pattern is reported,
 not interpreted physically.
 
-Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported().
+The analysed index (ROTI L1, S4 L1, ...) and its Ndat column, labels and
+unit come from index_config.py.
 """
 
 from pathlib import Path
@@ -40,6 +47,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import completeness_paths
+import index_config as indices
 import ndat_filter
 import plot_style
 import project_paths
@@ -58,15 +67,13 @@ DOY_START = 1
 DOY_END = 366
 TH_COV = 0.75
 
-# Index to compare. Only "roti_l1" is scientifically implemented/validated.
-VALUE_COL = "roti_l1"
+# Index to compare: any key of index_config.INDEX_CONFIG (e.g. "roti_l1", "s4_l1").
+VALUE_COL = indices.DEFAULT_INDEX
 
-# Ndat criterion to compare across stations (see ndat_filter.py); "eq60"
-# is the official criterion of the study. Only used by main(): the web
-# interface passes the selected mode explicitly. With this default, the
-# untagged outputs of 4-hourly_variability.py's console default
-# (NDAT_MODE = None) are not read.
-NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
+# Ndat criterion of the comparison (a canonical ndat_filter mode): the
+# Step 4 outputs of this criterion are read for every station. "all" = ALL_NDAT.
+# Only used by main(): the web interface passes the selected mode explicitly.
+NDAT_MODE = "all"
 
 # Fixed colour per station (by name, not by list position), same as in
 # 2-ccdf.py; stations without an entry get a fallback colour (plot_style).
@@ -77,69 +84,6 @@ PLOT_DPI = 250
 
 
 # ======================================================================
-# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL <-> UNIT
-# ======================================================================
-# Same index definitions as in Steps 2-6 (each script is self-contained).
-
-INDEX_CONFIG = {
-    "roti_l1": {
-        "parquet_column": "06_roti_l1",
-        "file_tag": "ROTIL1",
-        "label": "ROTI L1",
-        "unit": "TECU/min",
-        "scientifically_supported": True,
-    },
-    "roti_lgf": {
-        "parquet_column": "07_roti_lgf",
-        "file_tag": "ROTILGF",
-        "label": "ROTI LGF",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "roti_l2": {
-        "parquet_column": "12_roti_l2",
-        "file_tag": "ROTIL2",
-        "label": "ROTI L2",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "s4_l1": {
-        "parquet_column": "10_s4_l1",
-        "file_tag": "S4L1",
-        "label": "S4 L1",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-    "s4_l2": {
-        "parquet_column": "11_s4_l2",
-        "file_tag": "S4L2",
-        "label": "S4 L2",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-}
-
-
-def validate_index_supported(value_col: str) -> dict:
-    """Same check as 4-hourly_variability.py - value_col must have a validated analysis."""
-    if value_col not in INDEX_CONFIG:
-        raise ValueError(
-            f"Index '{value_col}' is not defined in INDEX_CONFIG. "
-            f"Known indices: {sorted(INDEX_CONFIG)}"
-        )
-
-    config = INDEX_CONFIG[value_col]
-
-    if not config["scientifically_supported"]:
-        raise ValueError(
-            f"Index '{value_col}' is available in the Parquet but its "
-            "Step 4 scientific analysis has not yet been implemented/validated."
-        )
-
-    return config
-
-
-# ======================================================================
 # [C] PATH RESOLUTION
 # ======================================================================
 def resolve_station_hourly_csv(
@@ -147,54 +91,49 @@ def resolve_station_hourly_csv(
     year: int,
     doy_start: int,
     doy_end: int,
+    th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> Path:
     """
     Path to the hourly_frequency.csv saved by 4-hourly_variability.py for
-    one station. Mirrors the naming of its resolve_paths(), including
-    ndat_mode (None: untagged; a mode: dir_tag subfolder and file_tag
-    prefix tag).
+    one station, Ndat criterion, DoY range and th_cov. Mirrors the naming
+    of its resolve_paths() (dir_tag subfolder, file_tag prefix tag and run
+    tag). Raises ValueError if ndat_mode is unknown.
     """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "4_hourly_variability" / value_col
+    ndat_dir = index_dir / ndat_config["dir_tag"]
+    prefix = f"4-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
-    if ndat_mode is None:
-        ndat_dir = index_dir
-        prefix = f"4-{station}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        ndat_dir = index_dir / ndat_config["dir_tag"]
-        prefix = f"4-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
-
-    doy_tag = f"DOY{doy_start}_{doy_end}"
-    return ndat_dir / f"{prefix}_{doy_tag}_hourly_frequency.csv"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
+    return ndat_dir / f"{prefix}_{run_tag}_hourly_frequency.csv"
 
 
 def resolve_comparison_paths(
     year: int,
+    doy_start: int,
+    doy_end: int,
+    th_cov: float,
+    value_col: str,
     index_config: dict,
-    value_col: str = VALUE_COL,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
-    Output paths under results/global/{YEAR}/ - never inside a station
-    folder. ndat_mode=None: directly in 4_hourly_comparison/; a mode adds
-    the value_col and ndat_config["dir_tag"] subfolders.
-
-    As in 3.2, value_col follows index_config and has a default, so
-    web_server.py calls this as
-    resolve_comparison_paths(year, index_config, ndat_mode=...).
+    Output paths under
+    results/global/{YEAR}/4_hourly_comparison/{VALUE_COL}/<dir_tag>/ -
+    never inside a station folder - with the run tag (DoY range, th_cov)
+    in the file names. Raises ValueError if ndat_mode is unknown.
     """
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "4_hourly_comparison"
 
-    if ndat_mode is None:
-        comparison_dir = base_dir
-        prefix = f"4-ALL_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        comparison_dir = base_dir / value_col / ndat_config["dir_tag"]
-        prefix = f"4-ALL_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    comparison_dir = base_dir / value_col / ndat_config["dir_tag"]
+    prefix = (
+        f"4-ALL_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+        f"_{completeness_paths.run_tag(doy_start, doy_end, th_cov)}"
+    )
 
     return {
         "comparison_dir": comparison_dir,
@@ -222,8 +161,9 @@ def run_hourly_comparison(
     year: int = YEAR,
     doy_start: int = DOY_START,
     doy_end: int = DOY_END,
+    th_cov: float = TH_COV,
     value_col: str = VALUE_COL,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Reads each station's already-saved Step 4 hourly CSV and builds the
@@ -231,18 +171,19 @@ def run_hourly_comparison(
     combined plots.
 
     Pure function: no prints, no file writes. Raises ValueError if
-    value_col is not scientifically supported, and FileNotFoundError only
-    if no requested station has Step 4 output (a partial set is a normal
-    result).
+    value_col is not scientifically supported or ndat_mode is unknown,
+    and FileNotFoundError only if no requested station has Step 4 output
+    for ndat_mode and th_cov (a partial set is a normal result).
 
-    Each station's CSV is looked up for exactly the given ndat_mode
-    (None: untagged path). There is no fallback to another mode: a
+    Every station is looked up for exactly the given ndat_mode, DoY range
+    and th_cov. There is no fallback to another criterion or threshold: a
     station without that output is reported in missing_stations with the
-    path that was checked. All stations share one ndat_mode, so Ndat
-    criteria are never mixed within a comparison.
+    criterion, th_cov and the path that was checked. All stations share one
+    ndat_mode and th_cov, so they are never mixed within a comparison.
     """
-    index_config = validate_index_supported(value_col)
-    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None
+    index_config = indices.validate_index_supported(value_col)
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    criterion = f"Ndat criterion '{ndat_mode}' ({ndat_config['label']}) and th_cov={th_cov}"
 
     table_rows = []
     hourly_by_station: dict[str, pd.DataFrame] = {}
@@ -250,11 +191,11 @@ def run_hourly_comparison(
 
     for station in stations:
         hourly_csv = resolve_station_hourly_csv(
-            station, year, doy_start, doy_end, value_col, index_config, ndat_mode
+            station, year, doy_start, doy_end, th_cov, value_col, index_config, ndat_mode
         )
 
         if not hourly_csv.exists():
-            missing_stations[station] = f"Step 4 output not found: {hourly_csv}"
+            missing_stations[station] = f"Step 4 output for {criterion} not found: {hourly_csv}"
             continue
 
         df_hourly = pd.read_csv(hourly_csv)
@@ -274,11 +215,11 @@ def run_hourly_comparison(
         })
 
     if not table_rows:
-        ndat_note = f", ndat_mode='{ndat_mode}'" if ndat_mode is not None else ""
         raise FileNotFoundError(
-            f"No station has Step 4 output for value_col='{value_col}'{ndat_note}, "
+            f"No station has Step 4 output for value_col='{value_col}', {criterion}, "
             f"year={year}, DOY{doy_start}_{doy_end}. Run 4-hourly_variability.py "
-            "for at least one station first."
+            "with the same Ndat criterion and coverage threshold for at least one "
+            "station first."
         )
 
     table = pd.DataFrame(table_rows)
@@ -358,8 +299,8 @@ def save_hourly_comparison_plot(
 # ======================================================================
 def main():
     result = run_hourly_comparison(
-        stations=STATIONS, year=YEAR, doy_start=DOY_START, doy_end=DOY_END, value_col=VALUE_COL,
-        ndat_mode=NDAT_MODE,
+        stations=STATIONS, year=YEAR, doy_start=DOY_START, doy_end=DOY_END, th_cov=TH_COV,
+        value_col=VALUE_COL, ndat_mode=NDAT_MODE,
     )
 
     index_config = result["index_config"]
@@ -390,7 +331,7 @@ def main():
         "a simultaneous instant across stations (see module docstring)."
     )
 
-    paths = resolve_comparison_paths(YEAR, index_config, value_col=VALUE_COL, ndat_mode=NDAT_MODE)
+    paths = resolve_comparison_paths(YEAR, DOY_START, DOY_END, TH_COV, VALUE_COL, index_config, NDAT_MODE)
     save_comparison_table(table, paths)
     save_hourly_comparison_plot(
         available, result["hourly_by_station"], index_config, 90,

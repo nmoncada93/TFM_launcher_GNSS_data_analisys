@@ -20,21 +20,28 @@ Reads the annual_thresholds.csv and daily_frequency.csv that
     visible directly.
 
 Nothing is recomputed, and neither the Step 0 Parquet nor the Step 1 CSV
-is read - only what 3-temporal_variability.py has saved per station. As in
-2.2-ccdf_comparison.py, a station without Step 3 output is skipped, not
-fatal.
+is read - only what 3-temporal_variability.py has saved per station.
+
+One comparison uses a single Ndat criterion (ndat_mode), DoY range and
+coverage threshold (th_cov) for every station: only the Step 3 outputs with
+that criterion and run tag (completeness_paths.run_tag) are read, and the
+comparison is written to its own <dir_tag> folder with the same run tag
+(plus top_n in the names of the outputs that depend on it). As in
+2.2-ccdf_comparison.py, a station without that exact Step 3 output is
+skipped and reported, never replaced by the output of another criterion,
+DoY range or threshold.
 
 IMPORTANT scientific caveat: each station's p90/p99 threshold is its OWN
 annual threshold. A day in the top-N lists of two stations means both
 show elevated activity RELATIVE TO THEIR OWN yearly distribution - NOT
-that both had the same absolute ROTI L1 magnitude that day. Absolute
+that both had the same absolute magnitude of the index that day. Absolute
 magnitudes are compared in Step 2 (monthly percentiles/CCDF).
 
 The output is descriptive: candidate days are detected and reported, not
 interpreted physically.
 
-Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported().
+The analysed index (ROTI L1, S4 L1, ...) and its Ndat column, labels and
+unit come from index_config.py.
 """
 
 from pathlib import Path
@@ -42,6 +49,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import completeness_paths
+import index_config as indices
 import ndat_filter
 import plot_style
 import project_paths
@@ -60,12 +69,12 @@ DOY_START = 1
 DOY_END = 366
 TH_COV = 0.75
 
-# Index to compare. Only "roti_l1" is scientifically implemented/validated.
-VALUE_COL = "roti_l1"
+# Index to compare: any key of index_config.INDEX_CONFIG (e.g. "roti_l1", "s4_l1").
+VALUE_COL = indices.DEFAULT_INDEX
 
-# Ndat criterion to compare across stations (see ndat_filter.py); "eq60"
-# is the official criterion of the study.
-NDAT_MODE = ndat_filter.NDAT_DEFAULT_MODE
+# Ndat criterion of the comparison (a canonical ndat_filter mode): the
+# Step 3 outputs of this criterion are read for every station. "all" = ALL_NDAT.
+NDAT_MODE = "all"
 
 # How many top days (by frequency_p99_pct) to keep per station, and to
 # check for cross-station coincidences.
@@ -80,69 +89,6 @@ PLOT_DPI = 250
 
 
 # ======================================================================
-# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL <-> UNIT
-# ======================================================================
-# Same index definitions as in Steps 2-6 (each script is self-contained).
-
-INDEX_CONFIG = {
-    "roti_l1": {
-        "parquet_column": "06_roti_l1",
-        "file_tag": "ROTIL1",
-        "label": "ROTI L1",
-        "unit": "TECU/min",
-        "scientifically_supported": True,
-    },
-    "roti_lgf": {
-        "parquet_column": "07_roti_lgf",
-        "file_tag": "ROTILGF",
-        "label": "ROTI LGF",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "roti_l2": {
-        "parquet_column": "12_roti_l2",
-        "file_tag": "ROTIL2",
-        "label": "ROTI L2",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "s4_l1": {
-        "parquet_column": "10_s4_l1",
-        "file_tag": "S4L1",
-        "label": "S4 L1",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-    "s4_l2": {
-        "parquet_column": "11_s4_l2",
-        "file_tag": "S4L2",
-        "label": "S4 L2",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-}
-
-
-def validate_index_supported(value_col: str) -> dict:
-    """Same check as 3-temporal_variability.py - value_col must have a validated analysis."""
-    if value_col not in INDEX_CONFIG:
-        raise ValueError(
-            f"Index '{value_col}' is not defined in INDEX_CONFIG. "
-            f"Known indices: {sorted(INDEX_CONFIG)}"
-        )
-
-    config = INDEX_CONFIG[value_col]
-
-    if not config["scientifically_supported"]:
-        raise ValueError(
-            f"Index '{value_col}' is available in the Parquet but its "
-            "Step 3 scientific analysis has not yet been implemented/validated."
-        )
-
-    return config
-
-
-# ======================================================================
 # [C] PATH RESOLUTION
 # ======================================================================
 def resolve_station_thresholds_csv(
@@ -150,28 +96,24 @@ def resolve_station_thresholds_csv(
     year: int,
     doy_start: int,
     doy_end: int,
+    th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> Path:
     """
     Path to the annual_thresholds.csv saved by 3-temporal_variability.py
-    for one station. Mirrors the naming of its resolve_paths(), including
-    ndat_mode (None: untagged; a mode: dir_tag subfolder and file_tag
-    prefix tag).
+    for one station, Ndat criterion, DoY range and th_cov. Mirrors the
+    naming of its resolve_paths() (dir_tag subfolder, file_tag prefix tag
+    and run tag). Raises ValueError if ndat_mode is unknown.
     """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
+    ndat_dir = index_dir / ndat_config["dir_tag"]
+    prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
-    if ndat_mode is None:
-        ndat_dir = index_dir
-        prefix = f"3-{station}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        ndat_dir = index_dir / ndat_config["dir_tag"]
-        prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
-
-    doy_tag = f"DOY{doy_start}_{doy_end}"
-    return ndat_dir / f"{prefix}_{doy_tag}_annual_thresholds.csv"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
+    return ndat_dir / f"{prefix}_{run_tag}_annual_thresholds.csv"
 
 
 def resolve_station_daily_csv(
@@ -179,58 +121,56 @@ def resolve_station_daily_csv(
     year: int,
     doy_start: int,
     doy_end: int,
+    th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> Path:
     """
     Path to the daily_frequency.csv saved by 3-temporal_variability.py;
     same logic as resolve_station_thresholds_csv().
     """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
+    ndat_dir = index_dir / ndat_config["dir_tag"]
+    prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
-    if ndat_mode is None:
-        ndat_dir = index_dir
-        prefix = f"3-{station}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        ndat_dir = index_dir / ndat_config["dir_tag"]
-        prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
-
-    doy_tag = f"DOY{doy_start}_{doy_end}"
-    return ndat_dir / f"{prefix}_{doy_tag}_daily_frequency.csv"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
+    return ndat_dir / f"{prefix}_{run_tag}_daily_frequency.csv"
 
 
 def resolve_comparison_paths(
     year: int,
+    doy_start: int,
+    doy_end: int,
+    th_cov: float,
+    value_col: str,
     index_config: dict,
-    value_col: str = VALUE_COL,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
+    top_n: int = TOP_N_DAYS,
 ) -> dict:
     """
-    Output paths under results/global/{YEAR}/ - never inside a station
-    folder. ndat_mode=None: directly in 3_temporal_comparison/; a mode
-    adds the value_col and ndat_config["dir_tag"] subfolders.
-
-    Unlike 2.2-ccdf_comparison.py, value_col follows index_config and has
-    a default, so web_server.py calls this as
-    resolve_comparison_paths(year, index_config, ndat_mode=...).
+    Output paths under
+    results/global/{YEAR}/3_temporal_comparison/{VALUE_COL}/<dir_tag>/ -
+    never inside a station folder - with the run tag (DoY range, th_cov)
+    in every file name and top_n in the names of the outputs that depend
+    on it (top days, coincidences). Raises ValueError if ndat_mode is
+    unknown.
     """
     base_dir = project_paths.RESULTS_ROOT / "global" / str(year) / "3_temporal_comparison"
 
-    if ndat_mode is None:
-        comparison_dir = base_dir
-        prefix = f"3-ALL_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        comparison_dir = base_dir / value_col / ndat_config["dir_tag"]
-        prefix = f"3-ALL_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    comparison_dir = base_dir / value_col / ndat_config["dir_tag"]
+    prefix = (
+        f"3-ALL_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+        f"_{completeness_paths.run_tag(doy_start, doy_end, th_cov)}"
+    )
 
     return {
         "comparison_dir": comparison_dir,
         "output_table_csv": comparison_dir / f"{prefix}_annual_summary_by_station.csv",
-        "output_top_days_csv": comparison_dir / f"{prefix}_top{TOP_N_DAYS}_days.csv",
-        "output_coincidences_csv": comparison_dir / f"{prefix}_coincidences.csv",
+        "output_top_days_csv": comparison_dir / f"{prefix}_top{top_n}_days.csv",
+        "output_coincidences_csv": comparison_dir / f"{prefix}_top{top_n}_coincidences.csv",
         "output_daily_comparison_png": comparison_dir / f"{prefix}_daily_p99_frequency_comparison.png",
     }
 
@@ -275,6 +215,8 @@ def _find_coincidences(top_days: pd.DataFrame) -> pd.DataFrame:
     )
     grouped["n_stations"] = grouped["station"].apply(len)
     grouped = grouped[grouped["n_stations"] >= 2].copy()
+    if grouped.empty:
+        return pd.DataFrame(columns=_COINCIDENCE_COLUMNS)
 
     grouped["stations"] = grouped["station"].apply(lambda s: ", ".join(sorted(s)))
     grouped["frequency_p99_pct_by_station"] = grouped.apply(
@@ -295,9 +237,10 @@ def run_temporal_comparison(
     year: int = YEAR,
     doy_start: int = DOY_START,
     doy_end: int = DOY_END,
+    th_cov: float = TH_COV,
     value_col: str = VALUE_COL,
     top_n: int = TOP_N_DAYS,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Reads each station's already-saved Step 3 CSVs and builds the
@@ -305,18 +248,19 @@ def run_temporal_comparison(
     module docstring.
 
     Pure function: no prints, no file writes. Raises ValueError if
-    value_col is not scientifically supported, and FileNotFoundError only
-    if no requested station has Step 3 output (a partial set is a normal
-    result).
+    value_col is not scientifically supported or ndat_mode is unknown,
+    and FileNotFoundError only if no requested station has Step 3 output
+    for ndat_mode and th_cov (a partial set is a normal result).
 
-    Each station's CSVs are looked up for exactly the given ndat_mode
-    (None: untagged paths). There is no fallback to another mode: a
+    Every station is looked up for exactly the given ndat_mode, DoY range
+    and th_cov. There is no fallback to another criterion or threshold: a
     station without that output is reported in missing_stations with the
-    path that was checked. All stations share one ndat_mode, so Ndat
-    criteria are never mixed within a comparison.
+    criterion, th_cov and the path that was checked. All stations share one
+    ndat_mode and th_cov, so they are never mixed within a comparison.
     """
-    index_config = validate_index_supported(value_col)
-    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode) if ndat_mode is not None else None
+    index_config = indices.validate_index_supported(value_col)
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+    criterion = f"Ndat criterion '{ndat_mode}' ({ndat_config['label']}) and th_cov={th_cov}"
 
     table_rows = []
     top_days_frames = []
@@ -325,15 +269,15 @@ def run_temporal_comparison(
 
     for station in stations:
         thresholds_csv = resolve_station_thresholds_csv(
-            station, year, doy_start, doy_end, value_col, index_config, ndat_mode
+            station, year, doy_start, doy_end, th_cov, value_col, index_config, ndat_mode
         )
         daily_csv = resolve_station_daily_csv(
-            station, year, doy_start, doy_end, value_col, index_config, ndat_mode
+            station, year, doy_start, doy_end, th_cov, value_col, index_config, ndat_mode
         )
 
         if not thresholds_csv.exists() or not daily_csv.exists():
             missing_path = thresholds_csv if not thresholds_csv.exists() else daily_csv
-            missing_stations[station] = f"Step 3 output not found: {missing_path}"
+            missing_stations[station] = f"Step 3 output for {criterion} not found: {missing_path}"
             continue
 
         df_thresholds = pd.read_csv(thresholds_csv)
@@ -372,11 +316,11 @@ def run_temporal_comparison(
         ]])
 
     if not table_rows:
-        ndat_note = f", ndat_mode='{ndat_mode}'" if ndat_mode is not None else ""
         raise FileNotFoundError(
-            f"No station has Step 3 output for value_col='{value_col}'{ndat_note}, "
+            f"No station has Step 3 output for value_col='{value_col}', {criterion}, "
             f"year={year}, DOY{doy_start}_{doy_end}. Run 3-temporal_variability.py "
-            "for at least one station first."
+            "with the same Ndat criterion and coverage threshold for at least one "
+            "station first."
         )
 
     table = pd.DataFrame(table_rows)
@@ -465,7 +409,7 @@ def save_daily_comparison_plot(
 # ======================================================================
 def main():
     result = run_temporal_comparison(
-        stations=STATIONS, year=YEAR, doy_start=DOY_START, doy_end=DOY_END,
+        stations=STATIONS, year=YEAR, doy_start=DOY_START, doy_end=DOY_END, th_cov=TH_COV,
         value_col=VALUE_COL, top_n=TOP_N_DAYS, ndat_mode=NDAT_MODE,
     )
 
@@ -506,10 +450,12 @@ def main():
         print(
             "\nReminder: a coincidence means both stations were elevated "
             "relative to their OWN annual threshold, not that they had the "
-            "same absolute ROTI L1 magnitude (see module docstring)."
+            f"same absolute {index_config['label']} magnitude (see module docstring)."
         )
 
-    paths = resolve_comparison_paths(YEAR, index_config, value_col=VALUE_COL, ndat_mode=NDAT_MODE)
+    paths = resolve_comparison_paths(
+        YEAR, DOY_START, DOY_END, TH_COV, VALUE_COL, index_config, NDAT_MODE, top_n=TOP_N_DAYS
+    )
     save_comparison_outputs(table, top_days, coincidences, paths)
     save_daily_comparison_plot(
         available, result["daily_by_station"], index_config,

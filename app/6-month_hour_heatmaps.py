@@ -7,19 +7,21 @@ Step 6 - Month-hour heatmaps of threshold exceedances.
 Analyses when the annual threshold exceedances occur as a function of
 month and local hour.
 
-Inputs: the Step 0 Parquet, the Step 1 coverage CSV and the Step 3
-annual-thresholds CSV. Outputs under
-results/{STATION}/{YEAR}/6_month_hour_heatmaps/{INDEX}/. Globals in section
-[A] are console defaults; main() is the entry point (web_server.py runs it
-with patched globals).
+Inputs: the Step 0 Parquet, the Step 1 completeness CSV and the Step 3
+annual-thresholds CSV, all of the same Ndat criterion. Outputs under
+results/{STATION}/{YEAR}/6_month_hour_heatmaps/{INDEX}/<dir_tag>/. Globals
+in section [A] are console defaults; main() is the entry point
+(web_server.py runs it with patched globals).
 
-Observations: those of the Step 1 valid days, then the Ndat criterion.
-Exceedances are counted against the station's own annual p90/p99 from
-Step 3. Month and hour are the Step 0 fixed-offset local columns
+Days, observations and thresholds always come from the same Ndat criterion:
+the valid days of that criterion's Step 1 completeness, the observations
+that satisfy it ("all": every observation) and the station's annual
+p90/p99 computed by Step 3 for that same criterion. The totals are checked
+against Step 3. Month and hour are the Step 0 fixed-offset local columns
 (19_month_local, 18_hour_local).
 
-Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported().
+The analysed index (ROTI L1, S4 L1, ...) and its Ndat column, labels and
+unit come from index_config.py.
 
 Main outputs
 ------------
@@ -35,6 +37,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+import completeness_paths
+import index_config as indices
 import ndat_filter
 import plot_style
 import project_paths
@@ -57,16 +61,14 @@ YEAR = 2024
 DOY_START = 1
 DOY_END = 366
 
-# Index to analyse. Only "roti_l1" is scientifically
-# implemented/validated - see INDEX_CONFIG.
-VALUE_COL = "roti_l1"
+# Index to analyse: any key of index_config.INDEX_CONFIG (e.g. "roti_l1", "s4_l1").
+VALUE_COL = indices.DEFAULT_INDEX
 
-# Ndat criterion. Console default None = no Ndat filter: outputs go to the
-# untagged folder, and the Step 3 thresholds are read from the untagged
-# folder too. This differs from Steps 2-3, whose default is "eq60". The web
-# interface passes the selected mode explicitly. The official results use
-# "eq60"; set NDAT_MODE = "eq60" to reproduce them from the console.
-NDAT_MODE = None
+# Ndat criterion (a canonical ndat_filter mode, e.g. "eq60"). It selects the Step 1
+# completeness whose valid days are used, the observations and the Step 3
+# thresholds; Steps 1 and 3 must have been run with the same criterion.
+# "all" keeps every observation.
+NDAT_MODE = "all"
 
 TH_COV = 0.75
 
@@ -105,73 +107,6 @@ MONTH_LABELS = [
 
 
 # ======================================================================
-# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL
-# ======================================================================
-# Same index definitions as in 2-ccdf.py / 3-temporal_variability.py
-# / 4-hourly_variability.py / 5-daypart_variability.py.
-INDEX_CONFIG = {
-    "roti_l1": {
-        "parquet_column": "06_roti_l1",
-        "file_tag": "ROTIL1",
-        "label": "ROTI L1",
-        "unit": "TECU/min",
-        "scientifically_supported": True,
-    },
-    "roti_lgf": {
-        "parquet_column": "07_roti_lgf",
-        "file_tag": "ROTILGF",
-        "label": "ROTI LGF",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "roti_l2": {
-        "parquet_column": "12_roti_l2",
-        "file_tag": "ROTIL2",
-        "label": "ROTI L2",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "s4_l1": {
-        "parquet_column": "10_s4_l1",
-        "file_tag": "S4L1",
-        "label": "S4 L1",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-    "s4_l2": {
-        "parquet_column": "11_s4_l2",
-        "file_tag": "S4L2",
-        "label": "S4 L2",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-}
-
-
-def validate_index_supported(value_col: str) -> dict:
-    """
-    Checks that value_col has an implemented and validated analysis - not
-    just that the column exists in the Parquet. Returns its INDEX_CONFIG
-    entry.
-    """
-    if value_col not in INDEX_CONFIG:
-        raise ValueError(
-            f"Index '{value_col}' is not defined in INDEX_CONFIG. "
-            f"Known indices: {sorted(INDEX_CONFIG)}"
-        )
-
-    config = INDEX_CONFIG[value_col]
-
-    if not config["scientifically_supported"]:
-        raise ValueError(
-            f"Index '{value_col}' is available in the Parquet but its "
-            "scientific analysis has not yet been implemented/validated."
-        )
-
-    return config
-
-
-# ======================================================================
 # [C] PATH RESOLUTION
 # ======================================================================
 def resolve_paths(
@@ -182,43 +117,38 @@ def resolve_paths(
     th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Input/output paths, computed from the arguments received.
 
-    The same ndat_mode selects both the Step 3 folder the thresholds are
-    read from and the Step 6 output folder, so thresholds of one Ndat
-    criterion are never combined with observations filtered by another.
-    ndat_mode=None: untagged folders and prefixes; a mode adds its
-    dir_tag subfolder and file_tag prefix tag.
+    The same ndat_mode selects the Step 1 completeness (completeness_paths),
+    the Step 3 folder the thresholds are read from and the Step 6 output
+    folder (<dir_tag> subfolders, file_tag in the prefixes), and the same
+    run tag (DoY range, th_cov) is in the Step 3 and Step 6 file names, so
+    days, observations and thresholds of different Ndat criteria or coverage
+    thresholds are never combined. Raises ValueError if ndat_mode is unknown.
     """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+
     parquet_path = (
         project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
         / f"0_{station}_{year}_observations.parquet"
     )
-    coverage_csv = (
-        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
-        / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
-    )
+    coverage_csv = completeness_paths.resolve_completeness_paths(
+        station, year, doy_start, doy_end, th_cov, ndat_mode, index=value_col
+    )["output_csv"]
 
-    doy_tag = f"DOY{doy_start}_{doy_end}"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
     step3_index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "6_month_hour_heatmaps" / value_col
 
-    if ndat_mode is None:
-        step3_dir = step3_index_dir
-        step3_prefix = f"3-{station}_{index_config['file_tag']}_{year}"
-        out_dir = index_dir
-        prefix = f"6-{station}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        step3_dir = step3_index_dir / ndat_config["dir_tag"]
-        step3_prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
-        out_dir = index_dir / ndat_config["dir_tag"]
-        prefix = f"6-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    step3_dir = step3_index_dir / ndat_config["dir_tag"]
+    step3_prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    out_dir = index_dir / ndat_config["dir_tag"]
+    prefix = f"6-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
-    thresholds_csv = step3_dir / f"{step3_prefix}_{doy_tag}_annual_thresholds.csv"
+    thresholds_csv = step3_dir / f"{step3_prefix}_{run_tag}_annual_thresholds.csv"
 
     return {
         "parquet_path": parquet_path,
@@ -226,12 +156,12 @@ def resolve_paths(
         "thresholds_csv": thresholds_csv,
         "index_dir": index_dir,
         "ndat_dir": out_dir,
-        "output_month_hour_csv": out_dir / f"{prefix}_{doy_tag}_month_hour_frequency.csv",
-        "output_heatmap_p90": out_dir / f"{prefix}_{doy_tag}_heatmap_p90.png",
-        "output_heatmap_p99": out_dir / f"{prefix}_{doy_tag}_heatmap_p99.png",
-        "output_heatmap_nvalues": out_dir / f"{prefix}_{doy_tag}_heatmap_nvalues.png",
-        "output_top_cells_p90_csv": out_dir / f"{prefix}_{doy_tag}_top{TOP_N_CELLS}_cells_p90.csv",
-        "output_top_cells_p99_csv": out_dir / f"{prefix}_{doy_tag}_top{TOP_N_CELLS}_cells_p99.csv",
+        "output_month_hour_csv": out_dir / f"{prefix}_{run_tag}_month_hour_frequency.csv",
+        "output_heatmap_p90": out_dir / f"{prefix}_{run_tag}_heatmap_p90.png",
+        "output_heatmap_p99": out_dir / f"{prefix}_{run_tag}_heatmap_p99.png",
+        "output_heatmap_nvalues": out_dir / f"{prefix}_{run_tag}_heatmap_nvalues.png",
+        "output_top_cells_p90_csv": out_dir / f"{prefix}_{run_tag}_top{TOP_N_CELLS}_cells_p90.csv",
+        "output_top_cells_p99_csv": out_dir / f"{prefix}_{run_tag}_top{TOP_N_CELLS}_cells_p99.csv",
         "prefix": prefix,
     }
 
@@ -266,14 +196,20 @@ def load_valid_days(coverage_csv: Path, doy_start: int, doy_end: int) -> pd.Data
     return df
 
 
-def load_thresholds(thresholds_csv: Path) -> tuple[float, float, dict]:
-    """Loads annual p90 and p99 thresholds from Step 3."""
+def load_thresholds(thresholds_csv: Path, th_cov: float) -> tuple[float, float, dict]:
+    """
+    Loads annual p90 and p99 thresholds from Step 3. Besides the file name
+    (run tag), the coverage_threshold column must match th_cov.
+    """
     if not thresholds_csv.exists():
-        raise FileNotFoundError(f"Thresholds CSV not found: {thresholds_csv}")
+        raise FileNotFoundError(
+            f"Step 3 annual thresholds not found: {thresholds_csv}\n"
+            "Run Step 3 with the same Ndat criterion, DoY range and coverage threshold first."
+        )
 
     df = pd.read_csv(thresholds_csv)
 
-    required_columns = {"p90_annual", "p99_annual"}
+    required_columns = {"coverage_threshold", "p90_annual", "p99_annual"}
     missing_columns = required_columns - set(df.columns)
 
     if missing_columns:
@@ -285,6 +221,13 @@ def load_thresholds(thresholds_csv: Path) -> tuple[float, float, dict]:
         raise ValueError("Thresholds CSV is empty.")
 
     row = df.iloc[0].to_dict()
+
+    found_th_cov = float(row["coverage_threshold"])
+    if not np.isclose(found_th_cov, th_cov, rtol=0.0, atol=1e-9):
+        raise ValueError(
+            f"Step 3 thresholds in {thresholds_csv.name} were computed with "
+            f"coverage_threshold={found_th_cov}, but TH_COV={th_cov} was requested."
+        )
 
     p90_annual = float(row["p90_annual"])
     p99_annual = float(row["p99_annual"])
@@ -303,28 +246,27 @@ def load_prepared_dataset(
     parquet_value_col: str,
     value_col: str,
     valid_doys,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
+    ndat_column: str = ndat_filter.NDAT_PARQUET_COLUMN,
 ) -> pd.DataFrame:
     """
     Loads doy_utc/month_local/hour_local/value_col from the Step 0
-    Parquet, restricted to the Step 1 valid days (the Step 0 Parquet
-    contains every day).
+    Parquet, restricted to valid_doys (the valid days of the Step 1
+    completeness of ndat_mode; the Step 0 Parquet contains every day).
 
-    With a ndat_mode, the observations are then restricted via
-    ndat_filter.apply_ndat_filter(), as in Steps 3-5; ndat_mode=None
-    applies no Ndat filter. The Ndat column is always dropped afterwards,
-    so it never reaches the returned DataFrame.
+    The observations are then restricted via ndat_filter.apply_ndat_filter()
+    on the index's Ndat column (ndat_column, index_config), as in Steps 3-5
+    ("all": every row). The Ndat column is always dropped afterwards, so it
+    never reaches the returned DataFrame.
     """
     df = pd.read_parquet(
         parquet_path,
-        columns=[DAY_COUNT_COL_RAW, MONTH_COL_RAW, HOUR_COL_RAW, parquet_value_col, ndat_filter.NDAT_PARQUET_COLUMN],
+        columns=[DAY_COUNT_COL_RAW, MONTH_COL_RAW, HOUR_COL_RAW, parquet_value_col, ndat_column],
     )
 
     df = df[df[DAY_COUNT_COL_RAW].isin(valid_doys)].copy()
-
-    if ndat_mode is not None:
-        df = ndat_filter.apply_ndat_filter(df, ndat_mode)
-    df = df.drop(columns=[ndat_filter.NDAT_PARQUET_COLUMN])
+    df = ndat_filter.apply_ndat_filter(df, ndat_mode, ndat_column)
+    df = df.drop(columns=[ndat_column])
 
     df = df.rename(columns={
         DAY_COUNT_COL_RAW: DAY_COUNT_COL,
@@ -640,7 +582,7 @@ def get_cross_station_maxima(
     th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Rank-1 row of the Top-10 p90/p99 CSVs already saved by main() for each
@@ -694,11 +636,10 @@ def get_cross_station_maxima(
         })
 
     if not rows:
-        ndat_note = f", ndat_mode='{ndat_mode}'" if ndat_mode is not None else ""
         raise FileNotFoundError(
-            f"No station has usable Step 6 output for value_col='{value_col}'{ndat_note}, "
-            f"year={year}, DOY{doy_start}_{doy_end}. Run 6-month_hour_heatmaps.py "
-            "for at least one station first."
+            f"No station has usable Step 6 output for value_col='{value_col}', ndat_mode='{ndat_mode}', "
+            f"th_cov={th_cov}, year={year}, DOY{doy_start}_{doy_end}. Run 6-month_hour_heatmaps.py "
+            "with the same Ndat criterion and coverage threshold for at least one station first."
         )
 
     table = pd.DataFrame(rows)  # order of `stations` preserved, not resorted
@@ -715,7 +656,8 @@ def get_cross_station_maxima(
 # ======================================================================
 
 def main() -> None:
-    index_config = validate_index_supported(VALUE_COL)
+    index_config = indices.validate_index_supported(VALUE_COL)
+    indices.validate_ndat_for_index(VALUE_COL, ndat_filter.validate_ndat_mode(NDAT_MODE))
     parquet_value_col = index_config["parquet_column"]
     index_label = index_config["label"]
     index_unit = index_config["unit"]
@@ -727,6 +669,7 @@ def main() -> None:
     print("=======================================================")
     print(f"Station: {STATION}")
     print(f"Year: {YEAR}")
+    print(f"Index: {index_label}")
     print(f"Grouping: {MONTH_COL} × {HOUR_COL}")
     print(f"Step 0 Parquet: {paths['parquet_path']}")
     print(f"Coverage CSV: {paths['coverage_csv']}")
@@ -738,11 +681,15 @@ def main() -> None:
             "Run 0-toParquet.py first."
         )
 
-    valid_days = load_valid_days(paths["coverage_csv"], DOY_START, DOY_END)
-    p90_annual, p99_annual, threshold_row = load_thresholds(paths["thresholds_csv"])
+    coverage_csv = completeness_paths.require_completeness_csv(
+        STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE, index=VALUE_COL
+    )
+    valid_days = load_valid_days(coverage_csv, DOY_START, DOY_END)
+    p90_annual, p99_annual, threshold_row = load_thresholds(paths["thresholds_csv"], TH_COV)
 
     df_prepared = load_prepared_dataset(
-        paths["parquet_path"], parquet_value_col, VALUE_COL, set(valid_days["DoY"]), NDAT_MODE
+        paths["parquet_path"], parquet_value_col, VALUE_COL, set(valid_days["DoY"]), NDAT_MODE,
+        index_config["ndat_column"],
     )
 
     df_month_hour = compute_month_hour_frequency(
@@ -761,7 +708,7 @@ def main() -> None:
         out_png=paths["output_heatmap_p90"],
         title=(
             f"Month-hour {index_label} p90 exceedance frequency — {STATION} — {YEAR}\n"
-            f"{index_label} ≥ T90 = {p90_annual:.3f} {index_unit}"
+            f"{index_label} ≥ T90 = {indices.value_with_unit(f'{p90_annual:.3f}', index_unit)}"
         ),
         colorbar_label="p90 exceedance frequency [%]",
         value_format="{:.2f}%",
@@ -773,7 +720,7 @@ def main() -> None:
         out_png=paths["output_heatmap_p99"],
         title=(
             f"Month-hour {index_label} p99 exceedance frequency — {STATION} — {YEAR}\n"
-            f"{index_label} ≥ T99 = {p99_annual:.3f} {index_unit}"
+            f"{index_label} ≥ T99 = {indices.value_with_unit(f'{p99_annual:.3f}', index_unit)}"
         ),
         colorbar_label="p99 exceedance frequency [%]",
         value_format="{:.2f}%",

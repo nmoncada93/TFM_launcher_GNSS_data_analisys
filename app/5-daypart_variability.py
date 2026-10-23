@@ -4,19 +4,21 @@
 """
 Step 5 - Daypart variability of threshold exceedances.
 
-Inputs: the Step 0 Parquet, the Step 1 coverage CSV and the Step 3
-annual-thresholds CSV. Outputs under
-results/{STATION}/{YEAR}/5_daypart_variability/{INDEX}/. Globals in section
-[A] are console defaults; main() is the entry point (web_server.py runs it
-with patched globals).
+Inputs: the Step 0 Parquet, the Step 1 completeness CSV and the Step 3
+annual-thresholds CSV, all of the same Ndat criterion. Outputs under
+results/{STATION}/{YEAR}/5_daypart_variability/{INDEX}/<dir_tag>/. Globals
+in section [A] are console defaults; main() is the entry point
+(web_server.py runs it with patched globals).
 
-Observations: those of the Step 1 valid days, then the Ndat criterion.
-Exceedances are counted against the station's own annual p90/p99 from
-Step 3. Dayparts are defined in fixed-offset local hours (DAYPARTS) and
-must cover the 24 hours exactly once.
+Days, observations and thresholds always come from the same Ndat criterion:
+the valid days of that criterion's Step 1 completeness, the observations
+that satisfy it ("all": every observation) and the station's annual
+p90/p99 computed by Step 3 for that same criterion. The totals are checked
+against Step 3. Dayparts are defined in fixed-offset local hours
+(DAYPARTS) and must cover the 24 hours exactly once.
 
-Scientific scope: only ROTI L1 (roti_l1) is implemented/validated - see
-INDEX_CONFIG / validate_index_supported().
+The analysed index (ROTI L1, S4 L1, ...) and its Ndat column, labels and
+unit come from index_config.py.
 """
 
 from pathlib import Path
@@ -24,6 +26,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+import completeness_paths
+import index_config as indices
 import ndat_filter
 import plot_style
 import project_paths
@@ -39,16 +43,14 @@ YEAR = 2024
 DOY_START = 1
 DOY_END = 366
 
-# Index to analyse. Only "roti_l1" is scientifically
-# implemented/validated - see INDEX_CONFIG.
-VALUE_COL = "roti_l1"
+# Index to analyse: any key of index_config.INDEX_CONFIG (e.g. "roti_l1", "s4_l1").
+VALUE_COL = indices.DEFAULT_INDEX
 
-# Ndat criterion. Console default None = no Ndat filter: outputs go to the
-# untagged folder, and the Step 3 thresholds are read from the untagged
-# folder too. This differs from Steps 2-3, whose default is "eq60". The web
-# interface passes the selected mode explicitly. The official results use
-# "eq60"; set NDAT_MODE = "eq60" to reproduce them from the console.
-NDAT_MODE = None
+# Ndat criterion (a canonical ndat_filter mode, e.g. "eq60"). It selects the Step 1
+# completeness whose valid days are used, the observations and the Step 3
+# thresholds; Steps 1 and 3 must have been run with the same criterion.
+# "all" keeps every observation.
+NDAT_MODE = "all"
 
 TH_COV = 0.75
 
@@ -94,73 +96,6 @@ PLOT_DPI = 250
 
 
 # ======================================================================
-# [B] INDICES: PARQUET COLUMN <-> FILE TAG <-> SCIENTIFIC LABEL
-# ======================================================================
-# Same index definitions as in 2-ccdf.py / 3-temporal_variability.py
-# / 4-hourly_variability.py.
-INDEX_CONFIG = {
-    "roti_l1": {
-        "parquet_column": "06_roti_l1",
-        "file_tag": "ROTIL1",
-        "label": "ROTI L1",
-        "unit": "TECU/min",
-        "scientifically_supported": True,
-    },
-    "roti_lgf": {
-        "parquet_column": "07_roti_lgf",
-        "file_tag": "ROTILGF",
-        "label": "ROTI LGF",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "roti_l2": {
-        "parquet_column": "12_roti_l2",
-        "file_tag": "ROTIL2",
-        "label": "ROTI L2",
-        "unit": "TECU/min",
-        "scientifically_supported": False,
-    },
-    "s4_l1": {
-        "parquet_column": "10_s4_l1",
-        "file_tag": "S4L1",
-        "label": "S4 L1",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-    "s4_l2": {
-        "parquet_column": "11_s4_l2",
-        "file_tag": "S4L2",
-        "label": "S4 L2",
-        "unit": "",  # S4 is dimensionless
-        "scientifically_supported": False,
-    },
-}
-
-
-def validate_index_supported(value_col: str) -> dict:
-    """
-    Checks that value_col has an implemented and validated analysis - not
-    just that the column exists in the Parquet. Returns its INDEX_CONFIG
-    entry.
-    """
-    if value_col not in INDEX_CONFIG:
-        raise ValueError(
-            f"Index '{value_col}' is not defined in INDEX_CONFIG. "
-            f"Known indices: {sorted(INDEX_CONFIG)}"
-        )
-
-    config = INDEX_CONFIG[value_col]
-
-    if not config["scientifically_supported"]:
-        raise ValueError(
-            f"Index '{value_col}' is available in the Parquet but its "
-            "scientific analysis has not yet been implemented/validated."
-        )
-
-    return config
-
-
-# ======================================================================
 # [C] PATH RESOLUTION
 # ======================================================================
 def resolve_paths(
@@ -171,43 +106,38 @@ def resolve_paths(
     th_cov: float,
     value_col: str,
     index_config: dict,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
 ) -> dict:
     """
     Input/output paths, computed from the arguments received.
 
-    The same ndat_mode selects both the Step 3 folder the thresholds are
-    read from and the Step 5 output folder, so thresholds of one Ndat
-    criterion are never combined with observations filtered by another.
-    ndat_mode=None: untagged folders and prefixes; a mode adds its
-    dir_tag subfolder and file_tag prefix tag.
+    The same ndat_mode selects the Step 1 completeness (completeness_paths),
+    the Step 3 folder the thresholds are read from and the Step 5 output
+    folder (<dir_tag> subfolders, file_tag in the prefixes), and the same
+    run tag (DoY range, th_cov) is in the Step 3 and Step 5 file names, so
+    days, observations and thresholds of different Ndat criteria or coverage
+    thresholds are never combined. Raises ValueError if ndat_mode is unknown.
     """
+    ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
+
     parquet_path = (
         project_paths.RESULTS_ROOT / station / str(year) / "0_parquet"
         / f"0_{station}_{year}_observations.parquet"
     )
-    coverage_csv = (
-        project_paths.RESULTS_ROOT / station / str(year) / "1_completeness"
-        / f"coverage_{station}_{year}_DOY{doy_start}_{doy_end}_coverageTH{th_cov}.csv"
-    )
+    coverage_csv = completeness_paths.resolve_completeness_paths(
+        station, year, doy_start, doy_end, th_cov, ndat_mode, index=value_col
+    )["output_csv"]
 
-    doy_tag = f"DOY{doy_start}_{doy_end}"
+    run_tag = completeness_paths.run_tag(doy_start, doy_end, th_cov)
     step3_index_dir = project_paths.RESULTS_ROOT / station / str(year) / "3_temporal_variability" / value_col
     index_dir = project_paths.RESULTS_ROOT / station / str(year) / "5_daypart_variability" / value_col
 
-    if ndat_mode is None:
-        step3_dir = step3_index_dir
-        step3_prefix = f"3-{station}_{index_config['file_tag']}_{year}"
-        out_dir = index_dir
-        prefix = f"5-{station}_{index_config['file_tag']}_{year}"
-    else:
-        ndat_config = ndat_filter.validate_ndat_mode(ndat_mode)
-        step3_dir = step3_index_dir / ndat_config["dir_tag"]
-        step3_prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
-        out_dir = index_dir / ndat_config["dir_tag"]
-        prefix = f"5-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    step3_dir = step3_index_dir / ndat_config["dir_tag"]
+    step3_prefix = f"3-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
+    out_dir = index_dir / ndat_config["dir_tag"]
+    prefix = f"5-{station}_{index_config['file_tag']}_{ndat_config['file_tag']}_{year}"
 
-    thresholds_csv = step3_dir / f"{step3_prefix}_{doy_tag}_annual_thresholds.csv"
+    thresholds_csv = step3_dir / f"{step3_prefix}_{run_tag}_annual_thresholds.csv"
 
     return {
         "parquet_path": parquet_path,
@@ -215,8 +145,8 @@ def resolve_paths(
         "thresholds_csv": thresholds_csv,
         "index_dir": index_dir,
         "ndat_dir": out_dir,
-        "output_daypart_csv": out_dir / f"{prefix}_{doy_tag}_daypart_frequency.csv",
-        "output_daypart_plot": out_dir / f"{prefix}_{doy_tag}_daypart_frequency.png",
+        "output_daypart_csv": out_dir / f"{prefix}_{run_tag}_daypart_frequency.csv",
+        "output_daypart_plot": out_dir / f"{prefix}_{run_tag}_daypart_frequency.png",
         "prefix": prefix,
     }
 
@@ -365,16 +295,24 @@ def load_valid_days(coverage_csv: Path, doy_start: int, doy_end: int) -> pd.Data
     return df
 
 
-def load_thresholds(thresholds_csv: Path, percentile_high: int, percentile_extreme: int) -> tuple[float, float, dict]:
-    """Loads annual p_high and p_extreme thresholds from Step 3."""
+def load_thresholds(
+    thresholds_csv: Path, th_cov: float, percentile_high: int, percentile_extreme: int,
+) -> tuple[float, float, dict]:
+    """
+    Loads annual p_high and p_extreme thresholds from Step 3. Besides the
+    file name (run tag), the coverage_threshold column must match th_cov.
+    """
     if not thresholds_csv.exists():
-        raise FileNotFoundError(f"Thresholds CSV not found: {thresholds_csv}")
+        raise FileNotFoundError(
+            f"Step 3 annual thresholds not found: {thresholds_csv}\n"
+            "Run Step 3 with the same Ndat criterion, DoY range and coverage threshold first."
+        )
 
     df = pd.read_csv(thresholds_csv)
 
     p_high_col = f"p{percentile_high}_annual"
     p_extreme_col = f"p{percentile_extreme}_annual"
-    required_columns = {p_high_col, p_extreme_col}
+    required_columns = {"coverage_threshold", p_high_col, p_extreme_col}
     missing_columns = required_columns - set(df.columns)
 
     if missing_columns:
@@ -386,6 +324,13 @@ def load_thresholds(thresholds_csv: Path, percentile_high: int, percentile_extre
         raise ValueError("Thresholds CSV is empty.")
 
     row = df.iloc[0].to_dict()
+
+    found_th_cov = float(row["coverage_threshold"])
+    if not np.isclose(found_th_cov, th_cov, rtol=0.0, atol=1e-9):
+        raise ValueError(
+            f"Step 3 thresholds in {thresholds_csv.name} were computed with "
+            f"coverage_threshold={found_th_cov}, but TH_COV={th_cov} was requested."
+        )
 
     p_high = float(row[p_high_col])
     p_extreme = float(row[p_extreme_col])
@@ -404,27 +349,26 @@ def load_prepared_dataset(
     parquet_value_col: str,
     value_col: str,
     valid_doys,
-    ndat_mode: str | None = None,
+    ndat_mode: str = "all",
+    ndat_column: str = ndat_filter.NDAT_PARQUET_COLUMN,
 ) -> pd.DataFrame:
     """
     Loads row-level hour_local/value_col data from the Step 0 Parquet,
-    restricted to the Step 1 valid days. The Step 0 Parquet contains every
-    day, so without this filter low-completeness days would enter the
-    daypart frequencies.
+    restricted to valid_doys (the valid days of the Step 1 completeness of
+    ndat_mode). The Step 0 Parquet contains every day, so without this
+    filter low-completeness days would enter the daypart frequencies.
 
-    With a ndat_mode, the observations are then restricted via
-    ndat_filter.apply_ndat_filter(), as in Steps 3-4; ndat_mode=None
-    applies no Ndat filter. Only hour_local and value_col are returned.
+    The observations are then restricted via ndat_filter.apply_ndat_filter()
+    on the index's Ndat column (ndat_column, index_config), as in Steps 3-4
+    ("all": every row). Only hour_local and value_col are returned.
     """
     df = pd.read_parquet(
         parquet_path,
-        columns=["14_doy_utc", "18_hour_local", parquet_value_col, ndat_filter.NDAT_PARQUET_COLUMN],
+        columns=["14_doy_utc", "18_hour_local", parquet_value_col, ndat_column],
     )
 
     df = df[df["14_doy_utc"].isin(valid_doys)].copy()
-
-    if ndat_mode is not None:
-        df = ndat_filter.apply_ndat_filter(df, ndat_mode)
+    df = ndat_filter.apply_ndat_filter(df, ndat_mode, ndat_column)
 
     df = df.rename(columns={
         "18_hour_local": "hour_local",
@@ -606,14 +550,14 @@ def save_daypart_plot(
         x - width / 2,
         df_daypart[freq_high_col],
         width,
-        label=f"{index_label} ≥ T{percentile_high} ({p_high:.3f} {index_unit})",
+        label=f"{index_label} ≥ T{percentile_high} ({indices.value_with_unit(f'{p_high:.3f}', index_unit)})",
     )
 
     bars_extreme = ax.bar(
         x + width / 2,
         df_daypart[freq_extreme_col],
         width,
-        label=f"{index_label} ≥ T{percentile_extreme} ({p_extreme:.3f} {index_unit})",
+        label=f"{index_label} ≥ T{percentile_extreme} ({indices.value_with_unit(f'{p_extreme:.3f}', index_unit)})",
     )
 
     ax.set_xticks(x)
@@ -666,7 +610,8 @@ def save_daypart_plot(
 # ======================================================================
 
 def main() -> None:
-    index_config = validate_index_supported(VALUE_COL)
+    index_config = indices.validate_index_supported(VALUE_COL)
+    indices.validate_ndat_for_index(VALUE_COL, ndat_filter.validate_ndat_mode(NDAT_MODE))
     parquet_value_col = index_config["parquet_column"]
     index_label = index_config["label"]
     index_unit = index_config["unit"]
@@ -678,6 +623,7 @@ def main() -> None:
     print("=======================================================")
     print(f"Station: {STATION}")
     print(f"Year: {YEAR}")
+    print(f"Index: {index_label}")
     print(f"Step 0 Parquet: {paths['parquet_path']}")
     print(f"Coverage CSV: {paths['coverage_csv']}")
     print(f"Annual thresholds CSV: {paths['thresholds_csv']}")
@@ -693,13 +639,17 @@ def main() -> None:
     for item in DAYPARTS:
         print(f"{item['name']}: {int(item['start_hour']):02d}:00-{int(item['end_hour']):02d}:00")
 
-    valid_days = load_valid_days(paths["coverage_csv"], DOY_START, DOY_END)
+    coverage_csv = completeness_paths.require_completeness_csv(
+        STATION, YEAR, DOY_START, DOY_END, TH_COV, NDAT_MODE, index=VALUE_COL
+    )
+    valid_days = load_valid_days(coverage_csv, DOY_START, DOY_END)
     p_high, p_extreme, threshold_row = load_thresholds(
-        paths["thresholds_csv"], PERCENTILE_HIGH, PERCENTILE_EXTREME
+        paths["thresholds_csv"], TH_COV, PERCENTILE_HIGH, PERCENTILE_EXTREME
     )
 
     df_prepared = load_prepared_dataset(
-        paths["parquet_path"], parquet_value_col, VALUE_COL, set(valid_days["DoY"]), NDAT_MODE
+        paths["parquet_path"], parquet_value_col, VALUE_COL, set(valid_days["DoY"]), NDAT_MODE,
+        index_config["ndat_column"],
     )
 
     df_daypart = compute_daypart_frequency(
