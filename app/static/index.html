@@ -852,6 +852,84 @@
         min-width: 12rem;
       }
 
+      /* Step 0: station configuration (app/stations.json), closed by default. */
+      details.station-config {
+        margin: 0 0 var(--s4);
+        max-width: 900px;
+      }
+      details.station-config > summary {
+        cursor: pointer;
+        font-size: var(--t-md);
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .station-row,
+      .station-actions,
+      .station-add {
+        display: flex;
+        align-items: center;
+        gap: var(--s3);
+        font-size: var(--t-sm);
+        color: var(--ink-2);
+      }
+      .station-row {
+        padding: var(--s1) 0;
+      }
+      .station-actions,
+      .station-add {
+        margin-top: var(--s2);
+      }
+      .station-add[hidden] {
+        display: none;
+      }
+      .station-code {
+        font-family: var(--mono);
+        font-weight: 600;
+        color: var(--ink);
+        min-width: 4.5rem;
+      }
+      .station-row label,
+      .station-add label {
+        display: flex;
+        align-items: center;
+        gap: var(--s2);
+      }
+      .station-row input,
+      .station-add input {
+        width: 6.5rem;
+        height: 1.9rem;
+        margin-top: 0;
+      }
+      #station-add-code {
+        text-transform: uppercase;
+      }
+      .station-feedback.ok,
+      .station-ok {
+        color: var(--ok);
+      }
+      .station-feedback.error {
+        color: var(--err);
+      }
+      .station-warn {
+        color: var(--busy);
+      }
+      button.station-remove {
+        width: 1.6rem;
+        height: 1.6rem;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--ink-3);
+        font-size: 1.1rem;
+        font-weight: 400;
+      }
+      button.station-remove:hover,
+      button.station-remove:focus-visible {
+        color: var(--err);
+        background: var(--err-soft);
+        border: 0;
+      }
+
       /* Step 0: expected RAW format, closed by default. */
       details.raw-format {
         margin: var(--s2) 0 0;
@@ -1247,6 +1325,27 @@
         </p>
         <p id="results-root-status" class="field-status" aria-live="polite"></p>
       </div>
+
+      <details class="station-config" id="station-config">
+        <summary>Station configuration</summary>
+        <div id="station-config-list"></div>
+        <div class="station-actions">
+          <button type="button" class="btn-quiet" id="station-add-toggle">+ Add station</button>
+          <button type="button" class="btn-quiet" id="station-detect">Detect from RAW</button>
+        </div>
+        <div id="station-add-form" class="station-add" hidden>
+          <label>Station code <input id="station-add-code" type="text" maxlength="16" autocomplete="off" /></label>
+          <label>Fixed offset <input id="station-add-offset" type="number" step="any" min="-12" max="14" autocomplete="off" /></label>
+          <button type="button" class="btn-quiet" id="station-add-button">Add</button>
+        </div>
+        <div id="station-detect-result"></div>
+        <p id="station-config-status" class="field-status" aria-live="polite"></p>
+        <p class="field-note">
+          Changes apply to the next Step 0 run: a year already built with
+          another station configuration is not rebuilt (Step 0 reports the
+          conflict). Removing a station deletes no result.
+        </p>
+      </details>
 
       <div class="grid">
         <label
@@ -4179,7 +4278,12 @@
             throw new Error(data.error || response.statusText);
           }
           STATIONS = data.stations.map((s) => s.code);
+          renderStationConfig(data.stations);
+          const oldBanner = document.getElementById("stations-config-error");
+          if (oldBanner) oldBanner.remove();
         } catch (err) {
+          const oldBanner = document.getElementById("stations-config-error");
+          if (oldBanner) oldBanner.remove();
           const banner = document.createElement("div");
           banner.id = "stations-config-error";
           banner.style.cssText =
@@ -4193,7 +4297,9 @@
         }
         for (const id of STATION_SELECT_IDS) {
           const select = document.getElementById(id);
+          const previous = select.value; // kept when the list changes (station added/removed)
           select.innerHTML = STATIONS.map((st) => `<option>${st}</option>`).join("");
+          if (STATIONS.includes(previous)) select.value = previous;
         }
         document.getElementById("step2-ccdf-grid-station-filter").innerHTML = STATIONS.map(
           (st) =>
@@ -4204,6 +4310,225 @@
         ).join("");
         refreshAllNdatSelects();
       }
+      // Station configuration (Step 0): edits app/stations.json through
+      // /api/stations/*, the only configuration the server writes. A Fixed
+      // offset is saved on Enter or when its field loses focus - once per
+      // change (data-saved / data-pending), never on each key; an invalid
+      // value is not sent and the last saved one comes back. Adding or
+      // removing a station reloads every station list (loadStations).
+      const OFFSET_MIN = -12;
+      const OFFSET_MAX = 14;
+
+      function parseOffset(text) {
+        const trimmed = String(text).trim();
+        const value = Number(trimmed);
+        return trimmed !== "" && Number.isFinite(value) && value >= OFFSET_MIN && value <= OFFSET_MAX
+          ? value
+          : null;
+      }
+
+      async function stationsPost(path, body) {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || response.statusText);
+        return data;
+      }
+
+      function showStationFeedback(el, text, isError) {
+        el.textContent = text;
+        el.className = "station-feedback " + (isError ? "error" : "ok");
+        clearTimeout(el._timer);
+        el._timer = setTimeout(() => {
+          el.textContent = "";
+          el.className = "station-feedback";
+        }, isError ? 6000 : 2000);
+      }
+
+      function renderStationConfig(stations) {
+        document.getElementById("station-config-list").innerHTML = stations
+          .map(
+            (s) =>
+              `<div class="station-row" data-code="${escapeHtml(s.code)}">` +
+              `<span class="station-code">${escapeHtml(s.code)}</span>` +
+              `<label>Fixed offset <input type="number" step="any" min="${OFFSET_MIN}" max="${OFFSET_MAX}" ` +
+              `value="${s.utc_offset_hours}" data-saved="${s.utc_offset_hours}" autocomplete="off" /></label>` +
+              `<span class="station-feedback" aria-live="polite"></span>` +
+              `<button type="button" class="station-remove" aria-label="Remove ${escapeHtml(s.code)}" ` +
+              `title="Remove ${escapeHtml(s.code)}">&times;</button></div>`,
+          )
+          .join("");
+      }
+
+      async function saveStationOffset(input) {
+        const row = input.closest(".station-row");
+        const feedback = row.querySelector(".station-feedback");
+        const value = parseOffset(input.value);
+        if (value === null) {
+          input.value = input.dataset.saved;
+          showStationFeedback(feedback, `Invalid offset (${OFFSET_MIN} to ${OFFSET_MAX})`, true);
+          return;
+        }
+        if (input.dataset.pending !== undefined) return; // re-checked when that save ends
+        if (value === Number(input.dataset.saved)) {
+          input.value = input.dataset.saved;
+          return;
+        }
+        input.dataset.pending = String(value);
+        try {
+          const data = await stationsPost("/api/stations/update", {
+            code: row.dataset.code,
+            utc_offset_hours: value,
+          });
+          const saved = data.stations.find((s) => s.code === row.dataset.code);
+          input.dataset.saved = String(saved ? saved.utc_offset_hours : value);
+          showStationFeedback(feedback, "✓", false);
+        } catch (err) {
+          input.value = input.dataset.saved;
+          showStationFeedback(feedback, err.message || String(err), true);
+        } finally {
+          delete input.dataset.pending;
+        }
+        // A different value typed while the save was running: save it too.
+        const latest = parseOffset(input.value);
+        if (document.activeElement !== input && latest !== null && latest !== Number(input.dataset.saved)) {
+          saveStationOffset(input);
+        }
+      }
+
+      async function addStation(code, offsetText) {
+        const offset = parseOffset(offsetText);
+        if (!String(code).trim()) {
+          setFieldStatus("station-config-status", "Enter a station code.", true);
+          return false;
+        }
+        if (offset === null) {
+          setFieldStatus(
+            "station-config-status",
+            `Enter a fixed offset between ${OFFSET_MIN} and ${OFFSET_MAX}.`,
+            true,
+          );
+          return false;
+        }
+        try {
+          const data = await stationsPost("/api/stations/add", {
+            code: String(code).trim(),
+            utc_offset_hours: offset,
+          });
+          await loadStations();
+          setFieldStatus("station-config-status", `${data.code} added.`, false);
+          return true;
+        } catch (err) {
+          setFieldStatus("station-config-status", err.message || String(err), true);
+          return false;
+        }
+      }
+
+      function detectedRowHtml(s) {
+        const code = `<span class="station-code">${escapeHtml(s.code)}</span>`;
+        if (s.configured) {
+          return `<div class="station-row">${code}<span class="station-ok">&check; already configured</span></div>`;
+        }
+        if (!s.addable) {
+          return (
+            `<div class="station-row">${code}<span class="station-warn">&#9888; not configured - ` +
+            `not usable as a station code</span></div>`
+          );
+        }
+        return (
+          `<div class="station-row detected" data-code="${escapeHtml(s.code)}">${code}` +
+          `<span class="station-warn">&#9888; not configured</span>` +
+          `<label>Fixed offset <input type="number" step="any" min="${OFFSET_MIN}" max="${OFFSET_MAX}" autocomplete="off" /></label>` +
+          `<button type="button" class="btn-quiet station-detected-add" disabled>Add</button></div>`
+        );
+      }
+
+      const stationList = document.getElementById("station-config-list");
+      stationList.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && event.target.matches("input")) {
+          event.preventDefault();
+          saveStationOffset(event.target);
+        }
+      });
+      stationList.addEventListener("focusout", (event) => {
+        if (event.target.matches("input")) saveStationOffset(event.target);
+      });
+      stationList.addEventListener("click", async (event) => {
+        const button = event.target.closest("button.station-remove");
+        if (!button) return;
+        const code = button.closest(".station-row").dataset.code;
+        if (!window.confirm(`Remove ${code} from station configuration?\nExisting results are not deleted.`)) return;
+        try {
+          await stationsPost("/api/stations/remove", { code });
+          await loadStations();
+          setFieldStatus("station-config-status", `${code} removed. No result was deleted.`, false);
+        } catch (err) {
+          setFieldStatus("station-config-status", err.message || String(err), true);
+        }
+      });
+
+      document.getElementById("station-add-toggle").addEventListener("click", () => {
+        const form = document.getElementById("station-add-form");
+        form.hidden = !form.hidden;
+        if (!form.hidden) document.getElementById("station-add-code").focus();
+      });
+      document.getElementById("station-add-button").addEventListener("click", async () => {
+        const codeField = document.getElementById("station-add-code");
+        const offsetField = document.getElementById("station-add-offset");
+        if (await addStation(codeField.value, offsetField.value)) {
+          codeField.value = "";
+          offsetField.value = "";
+          document.getElementById("station-add-form").hidden = true;
+        }
+      });
+
+      // Detect from RAW: receiver names (column 2) of a sample of the RAW
+      // files of the Step 0 folder, year and DoY range. A new one can only
+      // be added once its Fixed offset is typed - it is never guessed.
+      document.getElementById("station-detect").addEventListener("click", async () => {
+        const button = document.getElementById("station-detect");
+        const box = document.getElementById("station-detect-result");
+        button.disabled = true;
+        setFieldStatus("station-config-status", "Reading a sample of the RAW files...", false);
+        try {
+          const data = await stationsPost("/api/stations/detect", {
+            raw_dir: document.getElementById("step0-raw-dir").value.trim(),
+            year: parseInt(document.getElementById("step0-year").value, 10),
+            doy_start: parseInt(document.getElementById("step0-doy-start").value, 10),
+            doy_end: parseInt(document.getElementById("step0-doy-end").value, 10),
+          });
+          box.innerHTML =
+            `<p class="field-note">Stations found in RAW data (${data.files_scanned.length} of ` +
+            `${data.files_found} daily file(s) read, spread over the DoY range):</p>` +
+            data.stations.map(detectedRowHtml).join("");
+          setFieldStatus("station-config-status", "", false);
+        } catch (err) {
+          box.innerHTML = "";
+          setFieldStatus("station-config-status", err.message || String(err), true);
+        } finally {
+          button.disabled = false;
+        }
+      });
+      const detectBox = document.getElementById("station-detect-result");
+      detectBox.addEventListener("input", (event) => {
+        const row = event.target.closest(".station-row.detected");
+        if (row) row.querySelector("button").disabled = parseOffset(event.target.value) === null;
+      });
+      detectBox.addEventListener("click", async (event) => {
+        const button = event.target.closest("button.station-detected-add");
+        if (!button) return;
+        const row = button.closest(".station-row");
+        button.disabled = true;
+        if (await addStation(row.dataset.code, row.querySelector("input").value)) {
+          row.outerHTML = detectedRowHtml({ code: row.dataset.code, configured: true });
+        } else {
+          button.disabled = false;
+        }
+      });
+
       // The Index selector: filled from /api/indices (index_config.py) before
       // the stations, so the first Ndat-selector requests already carry the
       // index. Changing it relabels the page and refreshes every Ndat

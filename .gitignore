@@ -12,3 +12,4 @@ __pycache__/
 *.py[co]
 # Local virtual environments (run_web_server.bat/.sh use app/.venv first).
 .venv/
+/database_formats/

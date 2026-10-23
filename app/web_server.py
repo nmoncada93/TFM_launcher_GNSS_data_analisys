@@ -15,8 +15,10 @@ nothing.
 Serves static/index.html, the results files (GET /results/...), the
 station list (GET /api/stations), the results folder (GET /api/paths) and
 one POST endpoint per action (/api/run/step0 ... /api/run/step6, the
-cross-station comparisons, /api/ndat-modes, /api/browse-folder and
-/api/open-results-folder). Every analysis endpoint calls the step scripts'
+cross-station comparisons, /api/ndat-modes, /api/browse-folder,
+/api/open-results-folder, and /api/stations/add|update|remove|detect, which
+edit app/stations.json - the only file they can write - or list the
+receivers found in the RAW files). Every analysis endpoint calls the step scripts'
 own functions in this process - no subprocess and no second implementation
 of the science. Standard library only (http.server).
 
@@ -51,6 +53,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import socket
 import sys
 import threading
@@ -107,13 +110,15 @@ class StationsConfigError(Exception):
     """stations.json is missing or invalid - reported to the web, no fallback."""
 
 
-def load_stations_config(path: Path = STATIONS_JSON) -> list[tuple[str, float]]:
+def load_stations_config(path: Path | None = None) -> list[tuple[str, float]]:
     """
-    Reads and validates stations.json, returning [(code, utc_offset_hours)]
-    in file order. Read on every request that needs it, so edits to the file
-    take effect without restarting the server. Any problem raises
-    StationsConfigError - deliberately no silent fallback to a hardcoded list.
+    Reads and validates stations.json (STATIONS_JSON unless `path` is
+    given), returning [(code, utc_offset_hours)] in file order. Read on
+    every request that needs it, so edits to the file take effect without
+    restarting the server. Any problem raises StationsConfigError -
+    deliberately no silent fallback to a hardcoded list.
     """
+    path = STATIONS_JSON if path is None else path
     try:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -153,6 +158,105 @@ def _unconfigured(requested: list[str], config: list[tuple[str, float]]) -> list
     """Requested station codes that are not in stations.json."""
     known = {code for code, _ in config}
     return [s for s in requested if s not in known]
+
+
+# Station configuration editor (Step 0 "Station configuration"). The only
+# file it can write is STATIONS_JSON - fixed here, never taken from a
+# request - always as a complete document that load_stations_config()
+# accepts, replaced atomically, one change at a time. Step 0 records the
+# station list and offsets in its provenance, so a changed configuration
+# can never rebuild an existing year silently (RawSourceConflictError).
+STATION_CODE_PATTERN = re.compile(r"^[A-Z0-9_-]{1,16}$")
+# Fixed offsets of real time zones go from -12 to +14 hours; decimals are
+# allowed (e.g. 5.5, 5.75) - Step 0 adds them as a time delta.
+FIXED_OFFSET_RANGE = (-12, 14)
+_STATIONS_WRITE_LOCK = threading.Lock()
+
+
+def normalize_station_code(value) -> str:
+    """Station code of a request: stripped and upper case, 1-16 letters, digits, '-' or '_'."""
+    if not isinstance(value, str):
+        raise ValueError("The station code must be text, e.g. KOUG.")
+    code = value.strip().upper()
+    if not STATION_CODE_PATTERN.match(code):
+        raise ValueError(f"Invalid station code {value!r}: use 1-16 letters, digits, '-' or '_', e.g. KOUG.")
+    return code
+
+
+def parse_fixed_offset(value):
+    """
+    Fixed offset of a request, in hours: a finite JSON number within
+    FIXED_OFFSET_RANGE. Whole values are kept as integers (-3, not -3.0),
+    as in the hand-written file.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"The fixed offset must be a number of hours, got {json.dumps(value)}.")
+    low, high = FIXED_OFFSET_RANGE
+    if not low <= value <= high:
+        raise ValueError(f"The fixed offset must be between {low} and {high} hours, got {value:g}.")
+    return int(value) if float(value).is_integer() else float(value)
+
+
+def _format_stations_document(doc: dict) -> str:
+    """stations.json text: the hand-written layout, one station per line (plain indented JSON if it has other top-level keys)."""
+    if set(doc) != {"stations"}:
+        return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+    lines = ["    { " + json.dumps(entry, ensure_ascii=False)[1:-1] + " }" for entry in doc["stations"]]
+    return '{\n  "stations": [\n' + ",\n".join(lines) + "\n  ]\n}\n"
+
+
+def _write_stations_document(doc: dict) -> None:
+    """
+    Writes doc to a temporary file next to STATIONS_JSON, checks it with
+    load_stations_config() and only then replaces STATIONS_JSON with it
+    (os.replace, atomic): a failure at any point leaves the current file
+    untouched. LF line endings, as in the repository.
+    """
+    tmp = STATIONS_JSON.with_name(STATIONS_JSON.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(_format_stations_document(doc))
+        load_stations_config(tmp)
+        os.replace(tmp, STATIONS_JSON)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+
+
+def edit_stations_config(action: str, code: str, offset=None) -> list[tuple[str, float]]:
+    """
+    Applies one change to stations.json - "add" (code, offset), "update"
+    (the offset of code) or "remove" (code) - and returns the new
+    configuration. Other fields of the entries and their order are kept.
+    Codes are compared in upper case. Raises KeyError for an unknown code,
+    FileExistsError for a duplicate, ValueError when the last station would
+    be removed, StationsConfigError if the current file is invalid.
+    """
+    with _STATIONS_WRITE_LOCK:
+        load_stations_config()
+        doc = json.loads(STATIONS_JSON.read_text(encoding="utf-8"))
+        entries = doc["stations"]
+        index = next(
+            (i for i, entry in enumerate(entries) if str(entry["code"]).strip().upper() == code), None
+        )
+        if action == "add":
+            if index is not None:
+                raise FileExistsError(f"Station {code} is already configured.")
+            entries.append({"code": code, "utc_offset_hours": offset})
+        elif index is None:
+            raise KeyError(f"Station {code} is not configured.")
+        elif action == "update":
+            entries[index]["utc_offset_hours"] = offset
+        else:
+            if len(entries) == 1:
+                raise ValueError("At least one station must remain configured.")
+            del entries[index]
+        _write_stations_document(doc)
+        return load_stations_config()
+
+
+def stations_payload(config) -> list[dict]:
+    return [{"code": c, "utc_offset_hours": o} for c, o in config]
 
 BROWSE_TITLE = "Select the RAW data folder"
 
@@ -451,10 +555,7 @@ class Handler(BaseHTTPRequestHandler):
             except StationsConfigError as exc:
                 self._send_json(500, {"ok": False, "error": str(exc)})
                 return
-            self._send_json(200, {
-                "ok": True,
-                "stations": [{"code": c, "utc_offset_hours": o} for c, o in config],
-            })
+            self._send_json(200, {"ok": True, "stations": stations_payload(config)})
             return
 
         if route.startswith("/results/"):
@@ -479,6 +580,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/api/open-results-folder":
             self._handle_open_results_folder()
+            return
+
+        if route in ("/api/stations/add", "/api/stations/update", "/api/stations/remove"):
+            self._handle_stations_edit(route.rsplit("/", 1)[1])
+            return
+
+        if route == "/api/stations/detect":
+            self._handle_stations_detect()
             return
 
         if route == "/api/run/step0":
@@ -653,6 +762,105 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "cancelled": True})
         else:
             self._send_json(200, {"ok": True, "cancelled": False, "path": selected})
+
+    # Fields each station-configuration action accepts - exactly these, so a
+    # request can never name a file or anything else to write.
+    STATION_EDIT_FIELDS = {
+        "add": {"code", "utc_offset_hours"},
+        "update": {"code", "utc_offset_hours"},
+        "remove": {"code"},
+    }
+
+    def _handle_stations_edit(self, action: str) -> None:
+        """
+        POST /api/stations/add|update|remove: one change to app/stations.json
+        (edit_stations_config), answering the new station list. Same
+        protections as the other OS-level actions: the body is read first,
+        then the Origin check; only the action's own fields are accepted.
+        409 for a duplicate code, 404 for an unknown one.
+        """
+        try:
+            params = self._read_json_body()
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
+            return
+        if not self._same_origin():
+            self._send_json(403, {"ok": False, "error": "Request not sent by this application's page."})
+            return
+        expected = self.STATION_EDIT_FIELDS[action]
+        if not isinstance(params, dict) or set(params) != expected:
+            self._send_json(400, {"ok": False, "error": f"Expected exactly the field(s): {', '.join(sorted(expected))}."})
+            return
+        try:
+            code = normalize_station_code(params["code"])
+            offset = parse_fixed_offset(params["utc_offset_hours"]) if "utc_offset_hours" in expected else None
+            config = edit_stations_config(action, code, offset)
+            self._send_json(200, {"ok": True, "action": action, "code": code, "stations": stations_payload(config)})
+        except FileExistsError as exc:
+            self._send_json(409, {"ok": False, "error": str(exc)})
+        except KeyError as exc:
+            self._send_json(404, {"ok": False, "error": exc.args[0]})
+        except StationsConfigError as exc:
+            self._send_json(500, {"ok": False, "error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"ok": False, "error": str(exc)})
+        except OSError as exc:
+            self._send_json(500, {"ok": False, "error": f"Could not write {STATIONS_JSON.name}: {exc}"})
+
+    def _handle_stations_detect(self) -> None:
+        """
+        POST /api/stations/detect {raw_dir, year, doy_start, doy_end}: the
+        receiver names found in a sample of the RAW files Step 0 would read
+        (step0.sample_raw_receivers), each marked configured or not, with
+        its offset when configured. Reads only - the offset of a new
+        station is never guessed. Origin check as for the edits.
+        """
+        try:
+            params = self._read_json_body()
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "Invalid JSON body."})
+            return
+        if not self._same_origin():
+            self._send_json(403, {"ok": False, "error": "Request not sent by this application's page."})
+            return
+        config = self._stations_config()
+        if config is None:
+            return
+        try:
+            expected = {"raw_dir", "year", "doy_start", "doy_end"}
+            if not isinstance(params, dict) or set(params) != expected:
+                raise ValueError(f"Expected exactly the fields: {', '.join(sorted(expected))}.")
+            raw_dir = Path(str(params["raw_dir"]).strip() or step0.DATA_DIR)
+            if not raw_dir.is_dir():
+                raise ValueError(f"RAW folder not found: {raw_dir}")
+            year, doy_start, doy_end = (int(params[k]) for k in ("year", "doy_start", "doy_end"))
+            if not 1 <= doy_start <= doy_end <= 366:
+                raise ValueError("The DoY range must be within 1-366, start <= end.")
+            result = step0.sample_raw_receivers(raw_dir, year, doy_start, doy_end)
+            offsets = dict(config)
+            stations = [
+                {
+                    "code": code,
+                    "rows": rows,
+                    "configured": code in offsets,
+                    "utc_offset_hours": offsets.get(code),
+                    "addable": bool(STATION_CODE_PATTERN.match(code)),
+                }
+                for code, rows in sorted(result["receivers"].items())
+            ]
+            self._send_json(200, {
+                "ok": True,
+                "raw_dir": str(raw_dir.resolve()),
+                "files_found": result["files_found"],
+                "files_scanned": result["files_scanned"],
+                "stations": stations,
+            })
+        except FileNotFoundError as exc:
+            self._send_json(404, {"ok": False, "error": str(exc)})
+        except (ValueError, TypeError) as exc:
+            self._send_json(400, {"ok": False, "error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
     def _handle_run_step0(self) -> None:
         """

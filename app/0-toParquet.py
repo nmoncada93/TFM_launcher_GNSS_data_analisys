@@ -243,15 +243,77 @@ def find_bad_raw_lines(file_path: Path) -> tuple[int, int, int] | None:
     return None if first is None else (first[0], first[1], n_bad)
 
 
-def raw_format_error(file_path: Path, bad: tuple[int, int, int]) -> RawFormatError:
+def raw_format_error(
+    file_path: Path, bad: tuple[int, int, int],
+    consequence: str = "Step 0 stopped before writing any result file.",
+) -> RawFormatError:
     """RawFormatError for find_bad_raw_lines()'s result: file, first bad line, count."""
     line_number, n_fields, n_bad = bad
     return RawFormatError(
         f"RAW file {file_path.name} does not have the expected format: "
         f"{RAW_N_COLUMNS} whitespace-separated columns per line, no header. "
         f"Line {line_number} has {n_fields} column(s); {n_bad} line(s) of this file "
-        f"differ. File: {file_path}. Step 0 stopped before writing any result file."
+        f"differ. File: {file_path}. {consequence}".rstrip()
     )
+
+
+# Detect-from-RAW (web Station configuration): how many daily files are read.
+RAW_SAMPLE_FILES = 12
+
+
+def sample_raw_receivers(
+    data_dir: Path, year: int, doy_start: int, doy_end: int, max_files: int = RAW_SAMPLE_FILES,
+) -> dict:
+    """
+    Receiver names (column 2) found in a sample of the daily RAW files Step
+    0 would read for year/DoY range (resolve_raw_file()) - never the whole
+    year, which is tens of millions of lines.
+
+    Up to max_files files, spread evenly over the days that have one, the
+    first and the last always included: a station that starts or stops
+    during the year is still likely to be seen, but one present only on
+    days between the sampled files can be missed. Each sampled file is read
+    line by line keeping only the second field (no DataFrame), and every
+    line must have RAW_N_COLUMNS fields (RawFormatError otherwise).
+
+    Returns {"files_found": n, "files_scanned": [names], "receivers":
+    {name: rows}}. Raises FileNotFoundError if the range has no RAW file
+    and AmbiguousRawFileError as resolve_raw_file(). Reads only.
+    """
+    found = []
+    for doy in range(doy_start, doy_end + 1):
+        path, _ = resolve_raw_file(data_dir, year, doy)
+        if path.exists():
+            found.append(path)
+    if not found:
+        raise FileNotFoundError(f"No RAW file for {year}, DoY {doy_start}-{doy_end}, in {data_dir}.")
+    if len(found) <= max_files:
+        sample = found
+    else:
+        picks = sorted({round(i * (len(found) - 1) / (max_files - 1)) for i in range(max_files)})
+        sample = [found[i] for i in picks]
+
+    receivers: dict[str, int] = {}
+    for path in sample:
+        opener = gzip.open if path.name.lower().endswith(".gz") else open
+        first_bad, n_bad = None, 0
+        with opener(path, "rt", encoding="utf-8", errors="replace") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                fields = line.split()
+                if not fields:
+                    continue
+                if len(fields) != RAW_N_COLUMNS:
+                    n_bad += 1
+                    first_bad = first_bad or (line_number, len(fields))
+                    continue
+                receivers[fields[1]] = receivers.get(fields[1], 0) + 1
+        if first_bad is not None:
+            raise raw_format_error(path, (*first_bad, n_bad), consequence="")
+    return {
+        "files_found": len(found),
+        "files_scanned": [p.name for p in sample],
+        "receivers": receivers,
+    }
 
 
 def read_raw_day(file_path: Path) -> tuple[pd.DataFrame | None, str]:

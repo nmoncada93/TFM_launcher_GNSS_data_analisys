@@ -205,7 +205,13 @@ Example:
 
 `utc_offset_hours` is used to calculate local time and therefore affects hourly, daypart and month-hour analyses.
 
-To add a station, add another entry with its station code and UTC offset.
+`stations.json` can be managed from the Step 0 interface (**Station configuration**):
+
+- add or remove stations (removing one deletes no result);
+- edit the **Fixed offset** (hours, decimals allowed, from -12 to 14), saved on Enter or when the field loses focus;
+- **Detect from RAW**: lists the receiver names (column 2) found in a sample of up to 12 RAW files spread over the Step 0 year and DoY range, marking which ones are already configured. A new station can only be added once its Fixed offset is entered.
+
+The file can still be edited by hand: add another entry with its station code and UTC offset.
 
 The station code must match the identifier present in the RAW data.
 
